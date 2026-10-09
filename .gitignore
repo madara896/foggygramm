@@ -1,0 +1,13 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# FoggyGramm private data — NEVER commit.
+# Each install keeps its own vault, sessions, backups and API keys.
+data/
+*.enc
+
+# Local environment / secrets
+.env

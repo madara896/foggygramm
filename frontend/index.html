@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#000000" />
+  <title>FoggyGramm</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="bg" aria-hidden="true">
+    <span class="orb orb-1"></span>
+    <span class="orb orb-2"></span>
+    <span class="orb orb-3"></span>
+  </div>
+
+  <button class="theme-toggle" id="theme-toggle" aria-label="Toggle light and dark">&#9790;</button>
+
+  <!-- Corner mascot (dashboard only) -->
+  <div class="mascot" id="mascot" aria-hidden="true">
+    <div class="cloud-canvas">
+      <div class="cloud-turn">
+        <div class="cloud">
+          <div class="puff p1"></div><div class="puff p2"></div><div class="puff p3"></div>
+          <div class="puff p4"></div><div class="puff p5"></div>
+          <div class="face">
+            <div class="eyes"><div class="eye"><span class="glint"></span></div><div class="eye"><span class="glint"></span></div></div>
+            <div class="mouth"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="hint cloud-hint"><span class="cloud-hint-text"></span></div>
+
+  <main id="app">
+    <!-- Setup -->
+    <section class="view center" id="view-setup">
+      <div class="sheet auth">
+        <div class="peeker">
+          <div class="cloud-canvas"><div class="cloud-turn"><div class="cloud">
+            <div class="puff p1"></div><div class="puff p2"></div><div class="puff p3"></div>
+            <div class="puff p4"></div><div class="puff p5"></div>
+            <div class="face">
+              <div class="eyes"><div class="eye"><span class="glint"></span></div><div class="eye"><span class="glint"></span></div></div>
+              <div class="mouth"></div>
+            </div>
+          </div></div></div>
+          <div class="cloud-hint talk"><span class="cloud-hint-text"></span></div>
+        </div>
+        <div class="brand-text"><h1>FoggyGramm</h1><p>Open-source multi-account client</p></div>
+        <p class="lead">First-time setup. Everything stays on this machine.</p>
+        <div class="field"><label>API ID</label><input id="setup-api-id" inputmode="numeric" placeholder="1234567" /></div>
+        <div class="field"><label>API Hash</label><input id="setup-api-hash" placeholder="paste your API hash" /></div>
+        <div class="field"><label>Admin username</label><input id="setup-admin-user" placeholder="admin" /></div>
+        <div class="field"><label>Admin password</label><input id="setup-admin-pass" type="password" placeholder="at least 8 characters" /></div>
+        <button class="btn primary" id="btn-setup">Create vault</button>
+        <p class="foot">Get your free API ID &amp; Hash at my.telegram.org &rarr; API development tools.</p>
+      </div>
+    </section>
+
+    <!-- Login -->
+    <section class="view center" id="view-login">
+      <div class="sheet auth">
+        <div class="peeker">
+          <div class="cloud-canvas"><div class="cloud-turn"><div class="cloud">
+            <div class="puff p1"></div><div class="puff p2"></div><div class="puff p3"></div>
+            <div class="puff p4"></div><div class="puff p5"></div>
+            <div class="face">
+              <div class="eyes"><div class="eye"><span class="glint"></span></div><div class="eye"><span class="glint"></span></div></div>
+              <div class="mouth"></div>
+            </div>
+          </div></div></div>
+          <div class="cloud-hint talk"><span class="cloud-hint-text"></span></div>
+        </div>
+        <div class="brand-text"><h1>FoggyGramm</h1><p>Open-source multi-account client</p></div>
+        <div class="notice hidden" id="login-lock-note">Server locked &mdash; ask the admin to log in first.</div>
+        <div class="field"><label>Username</label><input id="login-user" placeholder="username" /></div>
+        <div class="field"><label>Password</label><input id="login-pass" type="password" placeholder="password" /></div>
+        <button class="btn primary" id="btn-login">Log in</button>
+        <div class="error" id="login-error"></div>
+      </div>
+    </section>
+
+    <!-- Dashboard -->
+    <section class="view wide" id="view-dash">
+      <div class="glassbar topbar">
+        <h1 class="app-title">FoggyGramm</h1>
+        <div class="spacer"></div>
+        <div class="who"><span id="who-name"></span><span class="chip" id="who-role"></span></div>
+        <button class="btn ghost small" id="btn-logout">Log out</button>
+      </div>
+
+      <div class="segmented" role="tablist">
+        <button class="seg active" data-tab="accounts">Accounts</button>
+        <button class="seg admin-only" data-tab="users">Users</button>
+        <button class="seg admin-only" data-tab="sync">Sync</button>
+      </div>
+
+      <div class="panel" id="tab-accounts">
+        <div class="panel-head">
+          <h2>Accounts</h2>
+          <button class="btn primary small admin-only" id="btn-add-account">Add account</button>
+        </div>
+        <div id="accounts-list" class="list"></div>
+      </div>
+
+      <div class="panel hidden" id="tab-users">
+        <div class="panel-head">
+          <h2>Regular users</h2>
+          <button class="btn primary small" id="btn-add-user">Add user</button>
+        </div>
+        <div id="users-list" class="list"></div>
+      </div>
+
+      <div class="panel hidden" id="tab-sync">
+        <div class="panel-head">
+          <h2>Backups</h2>
+          <button class="btn primary small" id="btn-backup-now">Back up now</button>
+        </div>
+        <p class="lead" id="backup-status">Loading backup status…</p>
+        <div class="field"><label>Backup mode</label><div id="backup-modes" class="checklist"></div></div>
+        <div class="field"><label>Keep last (1–30)</label><input id="backup-keep" type="number" value="10" min="1" max="30" /></div>
+        <div id="backups-list" class="list"></div>
+        <div class="panel-head" style="margin-top:26px">
+          <h2>Sync folder</h2>
+        </div>
+        <p class="lead" id="sync-status">Loading sync status…</p>
+        <p class="lead">Point Syncthing or Drive at the <b>data/sync</b> folder to carry the encrypted vault to your other devices.</p>
+        <button class="btn primary small" id="btn-sync-export">Export to sync folder</button>
+        <button class="btn ghost small" id="btn-sync-import">Import from sync folder</button>
+      </div>
+    </section>
+  </main>
+
+  <!-- Add-account modal -->
+  <div class="modal hidden" id="modal-account">
+    <div class="sheet">
+      <h2 class="sheet-title">Add a Telegram account</h2>
+      <div id="acct-step-phone">
+        <div class="field"><label>Phone number (with country code)</label><input id="acct-phone" placeholder="+1234567890" /></div>
+        <button class="btn primary" id="btn-send-code">Send code</button>
+      </div>
+      <div id="acct-step-code" class="hidden">
+        <p class="lead">Enter the code Telegram sent to <b id="acct-phone-echo"></b>.</p>
+        <div class="field"><label>Code</label><input id="acct-code" inputmode="numeric" placeholder="12345" /></div>
+        <button class="btn primary" id="btn-verify-code">Verify</button>
+      </div>
+      <div id="acct-step-pass" class="hidden">
+        <p class="lead">This account has two-step verification.</p>
+        <div class="field"><label>2FA password</label><input id="acct-pass" type="password" placeholder="password" /></div>
+        <button class="btn primary" id="btn-verify-pass">Verify</button>
+      </div>
+      <div class="error" id="acct-error"></div>
+      <button class="btn ghost" id="btn-close-modal">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Add-user modal -->
+  <div class="modal hidden" id="modal-user">
+    <div class="sheet">
+      <h2 class="sheet-title">Add a regular user</h2>
+      <div class="field"><label>Username</label><input id="user-name" placeholder="username" /></div>
+      <div class="field"><label>Password</label><input id="user-pass" type="password" placeholder="at least 6 characters" /></div>
+      <div class="field"><label>Max accounts (1&ndash;2)</label><input id="user-slots" type="number" value="2" min="1" max="2" /></div>
+      <div class="field"><label>Assign accounts</label><div id="user-accounts" class="checklist"></div></div>
+      <button class="btn primary" id="btn-save-user">Create user</button>
+      <div class="error" id="user-error"></div>
+      <button class="btn ghost" id="btn-close-user">Cancel</button>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
