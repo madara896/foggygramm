@@ -91,10 +91,14 @@ $("btn-logout").onclick = async () => {
 };
 
 // -------------------------------------------------------------- dashboard
+const TAB_TITLES = { chats: "Chats", accounts: "Accounts", sync: "Sync & Backups" };
+
 async function enterDashboard(me) {
   show("dash");
   $("who-name").textContent = me.username;
   $("who-role").textContent = me.role;
+  const railAvatar = $("rail-avatar");
+  if (railAvatar) railAvatar.textContent = initial(me.username);
   await loadAccounts();
   switchTab("chats");
 }
@@ -106,6 +110,8 @@ function switchTab(name) {
   ["accounts", "chats", "sync"].forEach((t) =>
     $(`tab-${t}`).classList.toggle("hidden", name !== t)
   );
+  const title = $("topbar-title");
+  if (title) title.textContent = TAB_TITLES[name] || name;
   if (name === "sync") loadSyncTab();
   if (name === "chats") loadChats();
 }
@@ -120,31 +126,61 @@ async function loadAccounts() {
   list.innerHTML = "";
   if (!ACCOUNTS.length) {
     list.innerHTML = `<div class="empty">No accounts yet.</div>`;
+  } else {
+    ACCOUNTS.forEach((acc, i) => {
+      const row = document.createElement("div");
+      row.className = "row";
+      row.style.animationDelay = `${i * 45}ms`;
+      row.innerHTML = `
+        <div class="avatar">${initial(acc.label)}</div>
+        <div class="meta">
+          <div class="title">${acc.label || acc.phone}</div>
+          <div class="sub">${acc.phone || ""}${acc.username ? " · @" + acc.username : ""}</div>
+        </div>
+        <div class="dot ${acc.connected ? "on" : ""}" title="${acc.connected ? "connected" : "offline"}"></div>
+      `;
+      const del = document.createElement("button");
+      del.className = "btn ghost small";
+      del.textContent = "Remove";
+      del.onclick = async () => {
+        if (!confirm(`Remove ${acc.label || acc.phone}?`)) return;
+        await api(`/accounts/${acc.id}`, { method: "DELETE" });
+        await loadAccounts();
+      };
+      row.appendChild(del);
+      list.appendChild(row);
+    });
+  }
+  // Keep the Chats account dropdown in sync (add/remove left it stale).
+  syncChatAccountSelect();
+}
+
+// Rebuild the Chats account <select> from ACCOUNTS, preserving selection.
+function syncChatAccountSelect() {
+  const sel = $("chat-account");
+  if (!sel) return;
+  const prev = CHAT.account || sel.value || null;
+  sel.innerHTML = "";
+  if (!ACCOUNTS.length) {
+    sel.innerHTML = `<option value="">No accounts available</option>`;
+    CHAT.account = null;
     return;
   }
-  ACCOUNTS.forEach((acc, i) => {
-    const row = document.createElement("div");
-    row.className = "row";
-    row.style.animationDelay = `${i * 45}ms`;
-    row.innerHTML = `
-      <div class="avatar">${initial(acc.label)}</div>
-      <div class="meta">
-        <div class="title">${acc.label || acc.phone}</div>
-        <div class="sub">${acc.phone || ""}${acc.username ? " · @" + acc.username : ""}</div>
-      </div>
-      <div class="dot ${acc.connected ? "on" : ""}" title="${acc.connected ? "connected" : "offline"}"></div>
-    `;
-    const del = document.createElement("button");
-    del.className = "btn ghost small";
-    del.textContent = "Remove";
-    del.onclick = async () => {
-      if (!confirm(`Remove ${acc.label || acc.phone}?`)) return;
-      await api(`/accounts/${acc.id}`, { method: "DELETE" });
-      await loadAccounts();
-    };
-    row.appendChild(del);
-    list.appendChild(row);
+  ACCOUNTS.forEach((a) => {
+    const opt = document.createElement("option");
+    opt.value = a.id;
+    opt.textContent = `${a.label || a.phone}${a.connected ? "" : " (offline)"}`;
+    sel.appendChild(opt);
   });
+  CHAT.account = ACCOUNTS.some((a) => a.id === prev) ? prev : ACCOUNTS[0].id;
+  sel.value = CHAT.account;
+  const status = $("topbar-status");
+  if (status) {
+    const online = ACCOUNTS.filter((a) => a.connected).length;
+    status.textContent = ACCOUNTS.length
+      ? `${ACCOUNTS.length} account${ACCOUNTS.length > 1 ? "s" : ""} · ${online} online`
+      : "";
+  }
 }
 
 // ------------------------------------------------------------- M2 sync tab
@@ -279,20 +315,13 @@ const CHAT = { account: null, peer: null, timer: null };
 
 async function loadChats() {
   if (CHAT.timer) { clearInterval(CHAT.timer); CHAT.timer = null; }
+  syncChatAccountSelect();
   const sel = $("chat-account");
-  sel.innerHTML = "";
   if (!ACCOUNTS.length) {
-    sel.innerHTML = `<option value="">No accounts available</option>`;
     $("dialogs-list").innerHTML = `<div class="empty">No accounts yet.</div>`;
     $("messages-list").innerHTML = "";
     return;
   }
-  ACCOUNTS.forEach((a) => {
-    const opt = document.createElement("option");
-    opt.value = a.id;
-    opt.textContent = `${a.label || a.phone}${a.connected ? "" : " (offline)"}`;
-    sel.appendChild(opt);
-  });
   if (!CHAT.account || !ACCOUNTS.some((a) => a.id === CHAT.account)) {
     CHAT.account = ACCOUNTS[0].id;
     CHAT.peer = null;

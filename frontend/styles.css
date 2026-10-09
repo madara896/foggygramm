@@ -657,3 +657,132 @@ body.covering .hint { opacity: 0; }
 @media (prefers-reduced-motion: reduce) {
   .bg::before, .orb, .eye, .mascot, .star { animation: none !important; }
 }
+
+/* ================================================= Telegram-style dashboard
+   Sidebar rail (Chats / Accounts / Sync + admin + log out) with the 3D
+   cloud docked in the rail footer — never floating over the chat content. */
+.view.wide.active { max-width: 1220px; }
+.tg-layout {
+  display: grid;
+  grid-template-columns: 212px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+.rail {
+  position: sticky;
+  top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: calc(100vh - 48px);
+  padding: 16px 12px;
+  border-radius: 22px;
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.025));
+  border: 1px solid var(--stroke);
+  -webkit-backdrop-filter: blur(30px) saturate(150%);
+  backdrop-filter: blur(30px) saturate(150%);
+}
+[data-theme="light"] .rail { background: linear-gradient(160deg, rgba(255,255,255,0.88), rgba(255,255,255,0.6)); }
+.rail-logo {
+  width: 46px; height: 46px; margin: 0 auto 2px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.92); color: #000;
+}
+[data-theme="light"] .rail-logo { background: #0a0a0a; color: #fff; }
+.rail-nav { display: flex; flex-direction: column; gap: 6px; }
+.rail-nav .seg {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; padding: 11px 12px;
+  border-radius: 14px;
+  font-size: 14.5px;
+  color: var(--muted);
+}
+.rail-nav .seg svg { flex-shrink: 0; }
+.rail-nav .seg:hover:not(.active) { color: var(--text); background: rgba(255, 255, 255, 0.06); }
+[data-theme="light"] .rail-nav .seg:hover:not(.active) { background: rgba(0, 0, 0, 0.05); }
+.rail-nav .seg.active { background: rgba(255, 255, 255, 0.92); color: #000; }
+[data-theme="light"] .rail-nav .seg.active { background: #0a0a0a; color: #fff; }
+.rail-foot {
+  margin-top: auto;
+  display: flex; flex-direction: column; gap: 10px;
+  position: relative;
+}
+/* docked cloud: scaled-down stage so the 3D tilt + 180° cover-turn still
+   work, but contained inside the sidebar instead of over the content */
+.rail-cloud {
+  display: grid; place-items: center;
+  padding: 6px 0 0;
+  pointer-events: none;
+}
+.rail-cloud .cloud-canvas { width: 150px; height: 104px; transform: scale(0.82); transform-origin: bottom center; }
+/* hint bubble sits above the docked cloud, tail pointing down at it */
+.rail-tip {
+  max-width: 100%; padding: 10px 12px; font-size: 12.5px; line-height: 1.45;
+  color: var(--text); border-radius: 14px; text-align: left;
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.045));
+  border: 1px solid var(--stroke);
+  -webkit-backdrop-filter: blur(24px) saturate(150%); backdrop-filter: blur(24px) saturate(150%);
+  box-shadow: var(--shadow);
+  transform: translateY(6px) scale(0.97);
+  pointer-events: none;
+}
+[data-theme="light"] .rail-tip { background: linear-gradient(160deg, rgba(255,255,255,0.95), rgba(255,255,255,0.75)); }
+.rail-tip.show { transform: none; }
+.rail-user {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px; border-radius: 14px;
+  background: rgba(255, 255, 255, 0.05); border: 1px solid var(--stroke-soft);
+  min-width: 0;
+}
+[data-theme="light"] .rail-user { background: rgba(0, 0, 0, 0.035); }
+.avatar.sm { width: 36px; height: 36px; font-size: 14px; }
+.rail-user-meta { min-width: 0; flex: 1; }
+.rail-name { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-user .chip { display: inline-block; margin-top: 3px; }
+.rail-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  width: 100%; padding: 11px 12px; border-radius: 13px;
+  border: 1px solid var(--stroke-soft); cursor: pointer;
+  background: rgba(255, 255, 255, 0.06); color: var(--text);
+  font-family: inherit; font-weight: 600; font-size: 13.5px;
+  transition: background 0.45s var(--ease-in), transform 0.45s var(--ease-in);
+}
+.rail-btn:hover { background: rgba(255, 255, 255, 0.13); transform: translateY(-1px); }
+[data-theme="light"] .rail-btn { background: rgba(0, 0, 0, 0.04); }
+[data-theme="light"] .rail-btn:hover { background: rgba(0, 0, 0, 0.09); }
+.tg-main { min-width: 0; }
+.tg-main .topbar { position: sticky; top: 16px; z-index: 5; }
+.topbar-status { font-size: 12.5px; color: var(--muted); }
+.field.inline { display: flex; align-items: center; gap: 12px; }
+.field.inline label { margin: 0; white-space: nowrap; }
+.field.inline select { max-width: 320px; }
+/* legacy floating mascot no longer used — guard in case of cached HTML */
+.mascot, .hint { display: none !important; }
+/* chat panes fill the viewport height and scroll internally */
+.chats-wrap { align-items: stretch; }
+.thread {
+  display: flex; flex-direction: column;
+  min-height: 480px; max-height: calc(100vh - 240px);
+  padding: 14px;
+  border-radius: 19px;
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.015));
+  border: 1px solid var(--stroke-soft);
+}
+[data-theme="light"] .thread { background: linear-gradient(160deg, rgba(255,255,255,0.85), rgba(255,255,255,0.5)); }
+.thread .panel-head { margin-bottom: 10px; }
+.messages { flex: 1; max-height: none; min-height: 220px; }
+.dialogs { max-height: calc(100vh - 300px); min-height: 200px; }
+@media (max-width: 900px) {
+  .tg-layout { grid-template-columns: 76px minmax(0, 1fr); }
+  .rail { padding: 14px 8px; }
+  .rail-nav .seg { flex-direction: column; gap: 5px; font-size: 11px; padding: 10px 6px; }
+  .rail-user-meta, .rail-btn span, .rail-tip { display: none; }
+  .rail-user { justify-content: center; padding: 8px; }
+  .rail-btn { padding: 10px; }
+  .rail-cloud .cloud-canvas { width: 64px; height: 46px; transform: scale(0.36); margin: -6px 0; }
+}
+@media (max-width: 640px) {
+  .dialogs { max-height: 240px; }
+  .thread { max-height: none; }
+}
