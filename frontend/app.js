@@ -95,8 +95,6 @@ const TAB_TITLES = { chats: "Chats", accounts: "Accounts", sync: "Sync & Backups
 
 async function enterDashboard(me) {
   show("dash");
-  $("who-name").textContent = me.username;
-  $("who-role").textContent = me.role;
   const railAvatar = $("rail-avatar");
   if (railAvatar) railAvatar.textContent = initial(me.username);
   await loadAccounts();
@@ -132,7 +130,7 @@ async function loadAccounts() {
       row.className = "row";
       row.style.animationDelay = `${i * 45}ms`;
       row.innerHTML = `
-        <div class="avatar">${initial(acc.label)}</div>
+        ${avatarHTML(acc.id, acc.user_id || 0, acc.label || acc.phone)}
         <div class="meta">
           <div class="title">${acc.label || acc.phone}</div>
           <div class="sub">${acc.phone || ""}${acc.username ? " · @" + acc.username : ""}</div>
@@ -311,12 +309,71 @@ const fmtClock = (iso) => {
     : d.toLocaleDateString([], { day: "numeric", month: "short" });
 };
 
-const CHAT = { account: null, peer: null, timer: null };
+const CHAT = { account: null, peer: null, timer: null, q: "", filter: "all" };
+let ALL_DIALOGS = [];
+
+const photoURL = (accId, peerId) =>
+  `/api/photo?account_id=${encodeURIComponent(accId)}&peer_id=${peerId}`;
+const mediaURL = (m) =>
+  `/api/media?account_id=${encodeURIComponent(CHAT.account)}&peer_id=${CHAT.peer}&msg_id=${m.id}`;
+
+const avatarHTML = (accId, peerId, title, cls) => `
+  <span class="avwrap${cls ? " " + cls : ""}">
+    <span class="avatar">${esc(initial(title))}</span>
+    <img class="avatar photo" src="${photoURL(accId, peerId)}" alt="" loading="lazy" onerror="this.remove()" />
+  </span>`;
+
+const fmtSize = (n) => {
+  if (!n) return "";
+  if (n < 1024) return n + " B";
+  if (n < 1048576) return (n / 1024).toFixed(1) + " KB";
+  if (n < 1073741824) return (n / 1048576).toFixed(1) + " MB";
+  return (n / 1073741824).toFixed(2) + " GB";
+};
+
+const fmtDur = (s) => {
+  s = Math.max(0, Math.round(s || 0));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+};
+
+const fmtDay = (iso) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const today = new Date();
+  const yest = new Date();
+  yest.setDate(today.getDate() - 1);
+  if (d.toDateString() === today.toDateString()) return "Today";
+  if (d.toDateString() === yest.toDateString()) return "Yesterday";
+  return d.toLocaleDateString([], { day: "numeric", month: "long", year: d.getFullYear() === today.getFullYear() ? undefined : "numeric" });
+};
+
+function mediaHTML(m) {
+  const url = mediaURL(m);
+  switch (m.kind) {
+    case "photo":
+      return `<a href="${url}" target="_blank" rel="noopener"><img class="msg-photo" src="${url}" loading="lazy" alt="" /></a>`;
+    case "sticker":
+      return `<img class="msg-sticker" src="${url}" loading="lazy" alt="" />`;
+    case "video":
+      return `<video class="msg-video" src="${url}" controls preload="metadata"></video>`;
+    case "round":
+      return `<video class="msg-round" src="${url}" autoplay muted loop playsinline title="Video message"></video>`;
+    case "voice":
+    case "audio":
+      return `<div class="msg-voice"><audio src="${url}" controls preload="metadata"></audio><span>${fmtDur(m.duration)}</span></div>`;
+    default: {
+      const kb = m.file_size ? fmtSize(m.file_size) : (m.mime || "file");
+      return `<a class="msg-file" href="${url}" download>
+        <span class="file-ic"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></svg></span>
+        <span><b>${esc(m.file_name || "file")}</b><small>${esc(kb)}</small></span>
+      </a>`;
+    }
+  }
+}
 
 async function loadChats() {
   if (CHAT.timer) { clearInterval(CHAT.timer); CHAT.timer = null; }
   syncChatAccountSelect();
-  const sel = $("chat-account");
   if (!ACCOUNTS.length) {
     $("dialogs-list").innerHTML = `<div class="empty">No accounts yet.</div>`;
     $("messages-list").innerHTML = "";
@@ -326,7 +383,7 @@ async function loadChats() {
     CHAT.account = ACCOUNTS[0].id;
     CHAT.peer = null;
   }
-  sel.value = CHAT.account;
+  $("chat-account").value = CHAT.account;
   await loadDialogs();
   CHAT.timer = setInterval(async () => {
     if ($("tab-chats").classList.contains("hidden")) return;
@@ -339,27 +396,30 @@ $("chat-account").onchange = async () => {
   CHAT.account = $("chat-account").value;
   CHAT.peer = null;
   $("thread-title").textContent = "Select a chat";
+  $("thread-status").textContent = "";
   $("messages-list").innerHTML = "";
   await loadDialogs();
 };
 
-async function loadDialogs(silent) {
-  if (!CHAT.account) return;
-  let dialogs = [];
-  try {
-    const data = await api(`/chats?account_id=${encodeURIComponent(CHAT.account)}&limit=30`);
-    dialogs = data.dialogs || [];
-  } catch (e) {
-    if (!silent) $("dialogs-list").innerHTML = `<div class="empty">${esc(e.message)}</div>`;
-    return;
-  }
+function renderDialogs() {
+  const q = (CHAT.q || "").toLowerCase();
+  const f = CHAT.filter || "all";
+  const rows = ALL_DIALOGS.filter((d) => {
+    if (f === "private" && !d.is_user) return false;
+    if (f === "groups" && !d.is_group) return false;
+    if (f === "channels" && !(d.is_channel && !d.is_group)) return false;
+    if (f === "unread" && !d.unread) return false;
+    if (q && !((d.title || "").toLowerCase().includes(q) ||
+                (d.last_text || "").toLowerCase().includes(q))) return false;
+    return true;
+  });
   const list = $("dialogs-list");
-  list.innerHTML = dialogs.length ? "" : `<div class="empty">No conversations yet.</div>`;
-  dialogs.forEach((d) => {
+  list.innerHTML = rows.length ? "" : `<div class="empty">No conversations found.</div>`;
+  rows.forEach((d) => {
     const row = document.createElement("div");
     row.className = "row dialog" + (CHAT.peer === d.peer_id ? " active" : "");
     row.innerHTML = `
-      <div class="avatar">${esc(initial(d.title))}</div>
+      ${avatarHTML(CHAT.account, d.peer_id, d.title)}
       <div class="meta">
         <div class="title">${esc(d.title)}</div>
         <div class="sub">${d.last_out ? "You: " : ""}${esc(d.last_text)}</div>
@@ -372,13 +432,61 @@ async function loadDialogs(silent) {
   });
 }
 
-async function openThread(peer_id, title) {
+async function loadDialogs(silent) {
+  if (!CHAT.account) return;
+  try {
+    const data = await api(`/chats?account_id=${encodeURIComponent(CHAT.account)}&limit=30`);
+    ALL_DIALOGS = data.dialogs || [];
+  } catch (e) {
+    if (!silent) $("dialogs-list").innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+    return;
+  }
+  renderDialogs();
+}
+
+$("dialog-search").addEventListener("input", (e) => {
+  CHAT.q = e.target.value;
+  renderDialogs();
+});
+
+document.querySelectorAll("#filter-pills .pill").forEach((p) => {
+  p.onclick = () => {
+    document.querySelectorAll("#filter-pills .pill").forEach((x) => x.classList.remove("active"));
+    p.classList.add("active");
+    CHAT.filter = p.dataset.f;
+    renderDialogs();
+  };
+});
+
+function setThreadHeader(peer_id, title) {
   CHAT.peer = peer_id;
   $("thread-title").textContent = title;
+  $("thread-avatar-initial").textContent = initial(title);
+  const img = $("thread-avatar-img");
+  img.style.display = "";
+  img.src = photoURL(CHAT.account, peer_id);
+  img.onerror = () => { img.style.display = "none"; };
+  $("thread-status").textContent = "";
+  if (peer_id == null) return;
+  api(`/chats/presence?account_id=${encodeURIComponent(CHAT.account)}&peer_id=${peer_id}`)
+    .then((d) => { if (CHAT.peer === peer_id) $("thread-status").textContent = d.status || ""; })
+    .catch(() => {});
+}
+
+async function openThread(peer_id, title) {
+  setThreadHeader(peer_id, title);
   document.querySelectorAll("#dialogs-list .dialog").forEach((el) => el.classList.remove("active"));
   await loadHistory(true);
   await loadDialogs(true);
 }
+
+$("btn-back").onclick = () => {
+  CHAT.peer = null;
+  $("thread-title").textContent = "Select a chat";
+  $("thread-status").textContent = "";
+  $("messages-list").innerHTML = "";
+  $("dialogs-list").scrollIntoView({ behavior: "smooth", block: "nearest" });
+};
 
 function nearBottom(el) {
   return el.scrollHeight - el.scrollTop - el.clientHeight < 120;
@@ -399,12 +507,23 @@ async function loadHistory(scroll) {
   const box = $("messages-list");
   const stick = scroll || nearBottom(box) || !box.children.length;
   box.innerHTML = messages.length ? "" : `<div class="empty">No messages yet. Say hi.</div>`;
+  let lastDay = "";
   messages.forEach((m) => {
+    const day = fmtDay(m.date);
+    if (day && day !== lastDay) {
+      lastDay = day;
+      const pill = document.createElement("div");
+      pill.className = "date-pill";
+      pill.textContent = day;
+      box.appendChild(pill);
+    }
     const wrap = document.createElement("div");
     wrap.className = "msg" + (m.out ? " out" : "");
+    const isMedia = m.kind && m.kind !== "text";
     wrap.innerHTML = `
-      <div class="bubble">${esc(m.text) || "<i>empty message</i>"}</div>
-      <div class="msg-time">${esc(fmtClock(m.date))}${m.has_media ? " · 📎" : ""}</div>
+      ${isMedia ? mediaHTML(m) : ""}
+      ${m.text ? `<div class="bubble">${esc(m.text)}</div>` : (isMedia ? "" : `<div class="bubble"><i>empty message</i></div>`)}
+      <div class="msg-time">${esc(fmtClock(m.date))}</div>
     `;
     box.appendChild(wrap);
   });
@@ -416,6 +535,7 @@ async function sendCurrent() {
   const text = input.value.trim();
   if (!text || !CHAT.account || !CHAT.peer) return;
   input.value = "";
+  syncComposerButtons();
   try {
     await api("/chats/send", {
       method: "POST",
@@ -424,16 +544,194 @@ async function sendCurrent() {
   } catch (e) {
     alert(e.message);
     input.value = text;
+    syncComposerButtons();
     return;
   }
   await loadHistory(true);
   await loadDialogs(true);
 }
 
+function syncComposerButtons() {
+  const hasText = $("composer-input").value.trim().length > 0;
+  $("btn-mic").classList.toggle("hidden", hasText);
+  $("btn-send").classList.toggle("hidden", !hasText);
+}
+
 $("btn-send").onclick = sendCurrent;
 $("composer-input").addEventListener("keydown", (e) => {
   if (e.key === "Enter") sendCurrent();
 });
+$("composer-input").addEventListener("input", syncComposerButtons);
+
+async function sendFileBlob(blob, filename, caption) {
+  if (!CHAT.account || !CHAT.peer) return;
+  const fd = new FormData();
+  fd.append("account_id", CHAT.account);
+  fd.append("peer_id", String(CHAT.peer));
+  fd.append("caption", caption || "");
+  fd.append("file", blob, filename);
+  const res = await fetch("/api/chats/send_file", { method: "POST", body: fd });
+  let data = {};
+  try { data = await res.json(); } catch (e) { /* empty */ }
+  if (!res.ok) throw new Error(data.detail || `Upload failed (${res.status})`);
+  await loadHistory(true);
+  await loadDialogs(true);
+}
+
+$("btn-attach").onclick = () => $("file-input").click();
+$("file-input").addEventListener("change", async () => {
+  const f = $("file-input").files[0];
+  $("file-input").value = "";
+  if (!f) return;
+  const caption = $("composer-input").value.trim();
+  $("composer-input").value = "";
+  syncComposerButtons();
+  try {
+    await sendFileBlob(f, f.name, caption);
+  } catch (e) {
+    alert(e.message);
+  }
+});
+
+// ------------------------------------------------- voice messages (record)
+let REC = null;
+const REC_CHUNKS = [];
+$("btn-mic").onclick = async () => {
+  if (REC) { try { REC.stop(); } catch (e) { /* already stopped */ } return; }
+  if (!CHAT.peer) { alert("Open a chat first."); return; }
+  let stream = null;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    alert("Microphone unavailable.");
+    return;
+  }
+  REC_CHUNKS.length = 0;
+  REC = new MediaRecorder(stream);
+  REC.ondataavailable = (e) => { if (e.data && e.data.size) REC_CHUNKS.push(e.data); };
+  REC.onstop = async () => {
+    stream.getTracks().forEach((t) => t.stop());
+    const rec = REC;
+    REC = null;
+    $("btn-mic").classList.remove("recording");
+    const blob = new Blob(REC_CHUNKS, { type: (rec && rec.mimeType) || "audio/webm" });
+    if (!blob.size) return;
+    try {
+      await sendFileBlob(blob, "voice-message.webm", "");
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+  REC.start();
+  $("btn-mic").classList.add("recording");
+};
+
+// ------------------------------------------------- menu, settings, new chat
+function closeMenus() {
+  $("main-menu").classList.add("hidden");
+}
+$("btn-menu").onclick = (e) => {
+  e.stopPropagation();
+  $("main-menu").classList.toggle("hidden");
+};
+document.addEventListener("click", (e) => {
+  if (!$("main-menu").classList.contains("hidden") && !$("main-menu").contains(e.target)) closeMenus();
+});
+
+function openSettings() {
+  closeMenus();
+  fillSettings();
+  $("modal-settings").classList.remove("hidden");
+}
+function fillSettings() {
+  const acc = ACCOUNTS.find((a) => a.id === CHAT.account) || ACCOUNTS[0];
+  $("set-msg").textContent = "";
+  if (!acc) {
+    $("who-name").textContent = "—";
+    $("set-phone").textContent = "—";
+    $("set-username").textContent = "—";
+    return;
+  }
+  $("who-name").textContent = acc.label || acc.phone || "—";
+  $("set-avatar-initial").textContent = initial(acc.label || acc.phone);
+  const img = $("set-avatar-img");
+  img.style.display = "";
+  img.src = photoURL(acc.id, acc.user_id || 0);
+  img.onerror = () => { img.style.display = "none"; };
+  $("set-phone").textContent = acc.phone || "—";
+  $("set-username").textContent = acc.username ? "@" + acc.username : "—";
+}
+$("btn-open-settings").onclick = openSettings;
+$("btn-avatar").onclick = openSettings;
+$("menu-settings").onclick = openSettings;
+$("btn-close-settings").onclick = () => $("modal-settings").classList.add("hidden");
+
+$("btn-set-backup").onclick = async () => {
+  $("set-msg").textContent = "Saving backup…";
+  try {
+    await api("/backup/now", { method: "POST", body: JSON.stringify({ label: "manual" }) });
+    $("set-msg").textContent = "Backup saved.";
+  } catch (e) {
+    $("set-msg").textContent = e.message;
+  }
+};
+$("btn-set-export").onclick = async () => {
+  $("set-msg").textContent = "Exporting…";
+  try {
+    await api("/sync/export", { method: "POST" });
+    $("set-msg").textContent = "Sync folder updated.";
+  } catch (e) {
+    $("set-msg").textContent = e.message;
+  }
+};
+$("btn-open-add-account").onclick = () => {
+  $("modal-settings").classList.add("hidden");
+  resetAccountModal();
+  $("modal-account").classList.remove("hidden");
+};
+
+$("menu-saved").onclick = async () => {
+  closeMenus();
+  if (!ALL_DIALOGS.length) await loadDialogs();
+  const saved = ALL_DIALOGS.find((d) => d.is_saved);
+  if (saved) {
+    if ($("tab-chats").classList.contains("hidden")) switchTab("chats");
+    await openThread(saved.peer_id, saved.title);
+  } else {
+    alert("Saved Messages is not available for this account.");
+  }
+};
+$("menu-add").onclick = () => {
+  closeMenus();
+  resetAccountModal();
+  $("modal-account").classList.remove("hidden");
+};
+$("menu-logout").onclick = async () => {
+  closeMenus();
+  await api("/logout", { method: "POST" });
+  location.reload();
+};
+
+$("btn-new-chat").onclick = () => {
+  $("newchat-error").textContent = "";
+  $("newchat-user").value = "";
+  $("modal-newchat").classList.remove("hidden");
+};
+$("btn-newchat-close").onclick = () => $("modal-newchat").classList.add("hidden");
+$("btn-newchat-open").onclick = async () => {
+  $("newchat-error").textContent = "";
+  const username = $("newchat-user").value.trim();
+  if (!username || !CHAT.account) return;
+  try {
+    const data = await api(
+      `/api/chats/resolve?account_id=${encodeURIComponent(CHAT.account)}&username=${encodeURIComponent(username)}`
+    );
+    $("modal-newchat").classList.add("hidden");
+    await openThread(data.peer_id, data.title);
+  } catch (e) {
+    $("newchat-error").textContent = e.message;
+  }
+};
 
 // ---------------------------------------------------------- account modal
 function resetAccountModal() {

@@ -17,8 +17,14 @@ FRONTEND_DIR = BASE_DIR / "frontend"
 # contains encrypted material (accounts.enc) plus non-secret metadata.
 SYNC_DIR = DATA_DIR / "sync"
 
+# Downloaded chat media + profile photos (per-install cache, git-ignored).
+MEDIA_DIR = DATA_DIR / "media"
+AVATARS_DIR = DATA_DIR / "avatars"
+
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 SYNC_DIR.mkdir(parents=True, exist_ok=True)
+MEDIA_DIR.mkdir(parents=True, exist_ok=True)
+AVATARS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _load_api_credentials() -> tuple[int | None, str | None]:

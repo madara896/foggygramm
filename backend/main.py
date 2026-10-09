@@ -10,15 +10,16 @@ from __future__ import annotations
 
 import asyncio
 import secrets
+from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .backup import BackupError, BackupManager
-from .config import API_HASH, API_ID, DATA_DIR, FRONTEND_DIR, SYNC_DIR, save_api_credentials
+from .config import API_HASH, API_ID, AVATARS_DIR, DATA_DIR, FRONTEND_DIR, MEDIA_DIR, SYNC_DIR, save_api_credentials
 from .telegram_manager import TelegramManager
 from .vault import Vault, VaultError
 
@@ -383,6 +384,63 @@ async def chat_send(body: SendBody, request: Request):
         return await manager.send_message(body.account_id, body.peer_id, body.text)
     except RuntimeError as exc:
         raise HTTPException(400, str(exc))
+
+
+@app.post("/api/chats/send_file")
+async def chat_send_file(request: Request, account_id: str = Form(...),
+                         peer_id: int = Form(...), caption: str = Form(""),
+                         file: UploadFile = File(...)):
+    require_admin(request)
+    _require_unlocked()
+    data = await file.read()
+    if not data:
+        raise HTTPException(400, "Empty file")
+    try:
+        return await manager.send_file(
+            account_id, peer_id, data, file.filename or "file", caption)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.get("/api/chats/resolve")
+async def chat_resolve(account_id: str, username: str, request: Request):
+    require_admin(request)
+    try:
+        return await manager.resolve_username(account_id, username)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.get("/api/chats/presence")
+async def chat_presence(account_id: str, peer_id: int, request: Request):
+    require_admin(request)
+    try:
+        return await manager.get_presence(account_id, peer_id)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.get("/api/media")
+async def chat_media(account_id: str, peer_id: int, msg_id: int, request: Request):
+    require_admin(request)
+    try:
+        path, mime = await manager.download_media(account_id, peer_id, msg_id, MEDIA_DIR)
+    except RuntimeError as exc:
+        raise HTTPException(404, str(exc))
+    path = Path(path)
+    return FileResponse(path, media_type=mime, filename=path.name,
+                        headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.get("/api/photo")
+async def chat_photo(account_id: str, peer_id: int, request: Request):
+    require_admin(request)
+    try:
+        path = await manager.download_photo(account_id, peer_id, AVATARS_DIR)
+    except RuntimeError as exc:
+        raise HTTPException(404, str(exc))
+    return FileResponse(Path(path), media_type="image/jpeg",
+                        headers={"Cache-Control": "public, max-age=3600"})
 
 
 # ------------------------------------------------------------------ frontend
