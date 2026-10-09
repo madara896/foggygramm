@@ -14,10 +14,8 @@
     <span class="orb orb-3"></span>
   </div>
 
-  <button class="theme-toggle" id="theme-toggle" aria-label="Toggle light and dark">&#9790;</button>
-
   <!-- Setup / login clouds stay inside the auth cards (see .peeker).
-       The dashboard cloud lives docked in the sidebar footer (see rail). -->
+       The dashboard cloud IS the sidebar logo (see rail). -->
 
   <main id="app">
     <!-- Setup -->
@@ -72,9 +70,21 @@
     <section class="view wide" id="view-dash">
       <div class="tg-layout">
         <aside class="rail" aria-label="Primary">
-          <div class="rail-logo" aria-hidden="true">
-            <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 4 3 11.2l6.3 2.4L11.5 20l3.4-4.6 4.6 3.4L21 4z"/><path d="M9.3 13.6 21 4l-8.6 14.6-1-4.3-2.1-1.7z" opacity=".45"/></svg>
+          <div class="rail-cloud" aria-hidden="true">
+            <div class="cloud-canvas">
+              <div class="cloud-turn">
+                <div class="cloud">
+                  <div class="puff p1"></div><div class="puff p2"></div><div class="puff p3"></div>
+                  <div class="puff p4"></div><div class="puff p5"></div>
+                  <div class="face">
+                    <div class="eyes"><div class="eye"><span class="glint"></span></div><div class="eye"><span class="glint"></span></div></div>
+                    <div class="mouth"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
+          <div class="rail-tip cloud-hint" id="rail-tip"><span class="cloud-hint-text"></span></div>
           <nav class="rail-nav" role="tablist" aria-label="Sections">
             <button class="seg active" data-tab="chats" role="tab" title="Chats">
               <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-8 8H4l2.3-2.9A8 8 0 1 1 21 12z"/><path d="M8.5 11h7M8.5 14h4.5"/></svg>
@@ -90,21 +100,6 @@
             </button>
           </nav>
           <div class="rail-foot">
-            <div class="rail-tip cloud-hint" id="rail-tip"><span class="cloud-hint-text"></span></div>
-            <div class="rail-cloud" aria-hidden="true">
-              <div class="cloud-canvas">
-                <div class="cloud-turn">
-                  <div class="cloud">
-                    <div class="puff p1"></div><div class="puff p2"></div><div class="puff p3"></div>
-                    <div class="puff p4"></div><div class="puff p5"></div>
-                    <div class="face">
-                      <div class="eyes"><div class="eye"><span class="glint"></span></div><div class="eye"><span class="glint"></span></div></div>
-                      <div class="mouth"></div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
             <div class="rail-user">
               <div class="avatar sm" id="rail-avatar">?</div>
               <div class="rail-user-meta">
@@ -112,6 +107,8 @@
                 <div class="chip" id="who-role"></div>
               </div>
             </div>
+            <div class="field rail-field"><label>Account</label><select id="chat-account"></select></div>
+            <button class="theme-toggle" id="theme-toggle" aria-label="Toggle light and dark">&#9790;</button>
             <button class="rail-btn" id="btn-logout" title="Log out">
               <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></svg>
               <span>Log out</span>
@@ -127,7 +124,6 @@
           </div>
 
           <div class="panel" id="tab-chats">
-            <div class="field inline"><label>Account</label><select id="chat-account"></select></div>
             <div class="chats-wrap">
               <div id="dialogs-list" class="list dialogs"></div>
               <div class="thread">
