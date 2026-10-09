@@ -68,9 +68,10 @@
 
     <!-- Dashboard : Telegram-style layout — icon sidebar + content -->
     <section class="view wide" id="view-dash">
-      <div class="tg-layout">
-        <aside class="rail" aria-label="Primary">
-          <div class="rail-cloud" aria-hidden="true">
+      <div class="tg-layout single">
+      <div class="drawer-backdrop hidden" id="drawer-backdrop"></div>
+        <aside class="drawer" id="drawer" aria-label="Menu">
+          <button class="drawer-cloud" id="btn-ai" title="Assistant (coming soon)">
             <div class="cloud-canvas">
               <div class="cloud-turn">
                 <div class="cloud">
@@ -83,11 +84,16 @@
                 </div>
               </div>
             </div>
-          </div>
-          <nav class="rail-nav" role="tablist" aria-label="Sections">
+            <span class="drawer-cloud-label">Assistant</span>
+          </button>
+          <nav class="drawer-nav" role="tablist" aria-label="Sections">
             <button class="seg active" data-tab="chats" role="tab" title="Chats">
               <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-8 8H4l2.3-2.9A8 8 0 1 1 21 12z"/><path d="M8.5 11h7M8.5 14h4.5"/></svg>
               <span>Chats</span>
+            </button>
+            <button class="seg" data-tab="contacts" role="tab" title="Contacts">
+              <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.2 3.4-5 6.5-5s5.7 1.8 6.5 5"/><circle cx="17" cy="9" r="2.6"/><path d="M15.5 14.6c2.9.2 5.2 1.9 6 4.4"/></svg>
+              <span>Contacts</span>
             </button>
             <button class="seg" data-tab="accounts" role="tab" title="Accounts">
               <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.2 3.4-5 6.5-5s5.7 1.8 6.5 5"/><circle cx="17" cy="9" r="2.6"/><path d="M15.5 14.6c2.9.2 5.2 1.9 6 4.4"/></svg>
@@ -97,52 +103,45 @@
               <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 0 1-14.2 5M4 12a8 8 0 0 1 14.2-5"/><path d="M18.5 3.5v4h-4M5.5 20.5v-4h4"/></svg>
               <span>Sync</span>
             </button>
-            <button class="rail-act" id="btn-open-settings" title="Settings">
-              <svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.9 2.9l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.2a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.9-2.9l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.2a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.9-2.9l.1.1a1.7 1.7 0 0 0 1.9.3h.1a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.2a1.7 1.7 0 0 0 1 1.5h.1a1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.9 2.9l-.1.1a1.7 1.7 0 0 0-.3 1.9v.1a1.7 1.7 0 0 0 1.5 1h.2a2 2 0 1 1 0 4h-.2a1.7 1.7 0 0 0-1.5 1z"/></svg>
-              <span>Settings</span>
-            </button>
           </nav>
-          <div class="rail-foot">
-            <button class="rail-avatar" id="btn-avatar" title="Settings">
-              <span class="avatar sm" id="rail-avatar">?</span>
-            </button>
+          <div class="drawer-section">
+            <div class="drawer-label">Account</div>
+            <select id="chat-account"></select>
+            <div class="drawer-status" id="drawer-status"></div>
+          </div>
+          <div class="drawer-section">
+            <div class="drawer-label">Appearance</div>
+            <div class="drawer-row"><span>Dark mode</span><button class="theme-toggle" id="theme-toggle" aria-label="Toggle light and dark">&#9790;</button></div>
+            <div class="drawer-row"><span>Density</span>
+              <span class="mini-pills" id="density-pills">
+                <button class="pill active" data-d="comfort">Comfort</button><button class="pill" data-d="compact">Compact</button>
+              </span>
+            </div>
+            <div class="drawer-row"><span>Font size</span>
+              <span class="mini-pills" id="font-pills">
+                <button class="pill" data-f="s">S</button><button class="pill active" data-f="m">M</button><button class="pill" data-f="l">L</button>
+              </span>
+            </div>
+            <label class="drawer-check"><input type="checkbox" id="pref-enter" checked /> <span>Enter sends message</span></label>
+          </div>
+          <div class="drawer-section">
+            <div class="drawer-label">Privacy</div>
+            <label class="drawer-check"><input type="checkbox" id="pref-ghost" /> <span>Ghost mode (appear offline)</span></label>
+            <label class="drawer-check"><input type="checkbox" id="pref-deleted" checked /> <span>Keep deleted messages</span></label>
+          </div>
+          <div class="drawer-foot">
+            <button class="btn ghost" id="btn-logout">Log out</button>
           </div>
         </aside>
 
-        <div class="tg-main">
-          <div class="glassbar topbar">
-            <h1 class="app-title" id="topbar-title">Chats</h1>
-            <div class="spacer"></div>
-            <div class="topbar-status" id="topbar-status"></div>
-          </div>
-
+        <div class="tg-main full">
           <div class="panel" id="tab-chats">
             <div class="chats-wrap">
               <div class="chats-side">
                 <div class="chats-header">
-                  <div class="menu-wrap">
-                    <button class="icon-btn" id="btn-menu" title="Menu">
-                      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
-                    </button>
-                    <div class="menu hidden" id="main-menu">
-                      <button class="menu-item" id="menu-saved">
-                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12v18l-6-4-6 4V3z"/></svg>
-                        <span>Saved Messages</span>
-                      </button>
-                      <button class="menu-item" id="menu-add">
-                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
-                        <span>Add Account</span>
-                      </button>
-                      <button class="menu-item" id="menu-settings">
-                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/></svg>
-                        <span>Settings</span>
-                      </button>
-                      <button class="menu-item" id="menu-logout">
-                        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></svg>
-                        <span>Log out</span>
-                      </button>
-                    </div>
-                  </div>
+                  <button class="icon-btn" id="btn-drawer" title="Menu">
+                    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+                  </button>
                   <div class="search-box">
                     <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
                     <input id="dialog-search" placeholder="Search" autocomplete="off" />
@@ -170,8 +169,26 @@
                     <h2 id="thread-title">Select a chat</h2>
                     <div class="thread-status" id="thread-status"></div>
                   </div>
+                  <button class="icon-btn sm" id="btn-thread-search" title="Search in chat">
+                    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                  </button>
+                  <button class="icon-btn sm" id="btn-export" title="Export history">
+                    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></svg>
+                  </button>
+                  <button class="icon-btn sm" id="btn-mute" title="Mute">
+                    <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>
+                  </button>
+                </div>
+                <div class="thread-search hidden" id="thread-search">
+                  <input id="thread-search-input" placeholder="Search in this chat…" autocomplete="off" />
                 </div>
                 <div id="messages-list" class="messages"></div>
+                <div class="reply-bar hidden" id="reply-bar">
+                  <div class="reply-meta"><b>Reply</b><span id="reply-text"></span></div>
+                  <button class="icon-btn sm" id="btn-reply-cancel" title="Cancel reply">
+                    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                  </button>
+                </div>
                 <div class="composer" id="composer">
                   <button class="icon-btn" id="btn-attach" title="Attach file">
                     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m21 11-8.5 8.5a5.5 5.5 0 0 1-7.8-7.8L13 3.4a3.7 3.7 0 0 1 5.2 5.2l-8.2 8.2a1.85 1.85 0 0 1-2.6-2.6L14.5 7"/></svg>
@@ -189,6 +206,11 @@
             </div>
           </div>
 
+          <div class="panel hidden" id="tab-contacts">
+            <div class="panel-head"><h2>Contacts</h2></div>
+            <div id="contacts-list" class="list"></div>
+          </div>
+
           <div class="panel hidden" id="tab-accounts">
             <div class="panel-head">
               <h2>Accounts</h2>
@@ -199,75 +221,50 @@
 
           <div class="panel hidden" id="tab-sync">
             <div class="panel-head">
-              <h2>Backups</h2>
+              <h2>Sync &amp; backups</h2>
               <button class="btn primary small" id="btn-backup-now">Back up now</button>
             </div>
-            <p class="lead" id="backup-status">Loading backup status…</p>
-            <div class="field"><label>Backup mode</label><div id="backup-modes" class="checklist"></div></div>
-            <div class="field"><label>Keep last (1–30)</label><input id="backup-keep" type="number" value="10" min="1" max="30" /></div>
-            <div id="backups-list" class="list"></div>
-            <div class="panel-head" style="margin-top:26px">
-              <h2>Sync folder</h2>
+            <div class="settings-card">
+              <div class="settings-row"><span class="set-label">Last backup</span><span class="set-value" id="backup-status">Loading…</span></div>
+              <div class="settings-row"><span class="set-label">Backup mode</span></div>
+              <div id="backup-modes" class="checklist"></div>
+              <div class="settings-row"><span class="set-label">Keep last (1–30)</span><input id="backup-keep" type="number" value="10" min="1" max="30" /></div>
             </div>
-            <p class="lead" id="sync-status">Loading sync status…</p>
-            <p class="lead">Point Syncthing or Drive at the <b>data/sync</b> folder to carry the encrypted vault to your other devices.</p>
-            <button class="btn primary small" id="btn-sync-export">Export to sync folder</button>
-            <button class="btn ghost small" id="btn-sync-import">Import from sync folder</button>
+            <div id="backups-list" class="list"></div>
+            <div class="panel-head" style="margin-top:26px"><h2>Sync folder</h2></div>
+            <div class="settings-card">
+              <p class="lead" id="sync-status">Loading sync status…</p>
+              <p class="lead">Point Syncthing or Drive at the <b>data/sync</b> folder to carry the encrypted vault to your other devices.</p>
+              <div class="btn-row">
+                <button class="btn primary small" id="btn-sync-export">Export to sync folder</button>
+                <button class="btn ghost small" id="btn-sync-import">Import from sync folder</button>
+              </div>
+            </div>
           </div>
         </div>
+
+        <aside class="ai-panel hidden" id="ai-panel" aria-label="Assistant">
+          <div class="ai-head">
+            <span class="ai-orb" aria-hidden="true"></span>
+            <div class="thread-meta">
+              <h2>Assistant</h2>
+              <div class="thread-status">task helper · <span class="soon">coming soon</span></div>
+            </div>
+            <button class="icon-btn sm" id="btn-ai-close" title="Close">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+          </div>
+          <div class="messages" id="ai-messages"></div>
+          <div class="composer">
+            <input id="ai-input" placeholder="Describe a task…" autocomplete="off" />
+            <button class="icon-btn send" id="btn-ai-send" title="Send">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 4 3 11.2l6.3 2.4L11.5 20l3.4-4.6 4.6 3.4L21 4z"/></svg>
+            </button>
+          </div>
+        </aside>
       </div>
     </section>
   </main>
-
-  <!-- Settings modal -->
-  <div class="modal hidden" id="modal-settings">
-    <div class="sheet settings-sheet">
-      <div class="settings-head">
-        <button class="icon-btn" id="btn-close-settings" title="Close">
-          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-        </button>
-        <h2 class="sheet-title">Settings</h2>
-      </div>
-      <div class="settings-profile">
-        <span class="avwrap lg"><span class="avatar" id="set-avatar-initial">?</span><img class="avatar photo" id="set-avatar-img" alt="" /></span>
-        <div class="settings-name" id="who-name">—</div>
-        <div class="settings-status">online</div>
-      </div>
-      <div class="settings-card">
-        <div class="settings-row">
-          <span class="set-label">Phone</span>
-          <span class="set-value" id="set-phone">—</span>
-        </div>
-        <div class="settings-row">
-          <span class="set-label">Username</span>
-          <span class="set-value" id="set-username">—</span>
-        </div>
-        <div class="settings-row">
-          <span class="set-label">Account</span>
-          <select id="chat-account"></select>
-        </div>
-        <div class="settings-row">
-          <button class="btn ghost small" id="btn-open-add-account">Add Account</button>
-        </div>
-      </div>
-      <div class="settings-card">
-        <div class="settings-row">
-          <span class="set-label">Dark mode</span>
-          <button class="theme-toggle" id="theme-toggle" aria-label="Toggle light and dark">&#9790;</button>
-        </div>
-        <div class="settings-row">
-          <span class="set-label">Backup</span>
-          <button class="btn ghost small" id="btn-set-backup">Back up now</button>
-        </div>
-        <div class="settings-row">
-          <span class="set-label">Sync</span>
-          <button class="btn ghost small" id="btn-set-export">Export</button>
-        </div>
-        <div class="error" id="set-msg"></div>
-      </div>
-      <button class="btn ghost" id="btn-logout">Log out</button>
-    </div>
-  </div>
 
   <!-- New chat modal -->
   <div class="modal hidden" id="modal-newchat">

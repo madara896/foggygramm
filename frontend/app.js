@@ -91,13 +91,11 @@ $("btn-logout").onclick = async () => {
 };
 
 // -------------------------------------------------------------- dashboard
-const TAB_TITLES = { chats: "Chats", accounts: "Accounts", sync: "Sync & Backups" };
-
 async function enterDashboard(me) {
   show("dash");
-  const railAvatar = $("rail-avatar");
-  if (railAvatar) railAvatar.textContent = initial(me.username);
+  applyUiPrefs();
   await loadAccounts();
+  await loadServerPrefs();
   switchTab("chats");
 }
 
@@ -105,13 +103,13 @@ function switchTab(name) {
   document.querySelectorAll(".seg").forEach((t) =>
     t.classList.toggle("active", t.dataset.tab === name)
   );
-  ["accounts", "chats", "sync"].forEach((t) =>
+  ["accounts", "chats", "contacts", "sync"].forEach((t) =>
     $(`tab-${t}`).classList.toggle("hidden", name !== t)
   );
-  const title = $("topbar-title");
-  if (title) title.textContent = TAB_TITLES[name] || name;
+  closeDrawer();
   if (name === "sync") loadSyncTab();
   if (name === "chats") loadChats();
+  if (name === "contacts") loadContacts();
 }
 document.querySelectorAll(".seg").forEach((t) => (t.onclick = () => switchTab(t.dataset.tab)));
 
@@ -172,7 +170,7 @@ function syncChatAccountSelect() {
   });
   CHAT.account = ACCOUNTS.some((a) => a.id === prev) ? prev : ACCOUNTS[0].id;
   sel.value = CHAT.account;
-  const status = $("topbar-status");
+  const status = $("drawer-status");
   if (status) {
     const online = ACCOUNTS.filter((a) => a.connected).length;
     status.textContent = ACCOUNTS.length
@@ -309,8 +307,154 @@ const fmtClock = (iso) => {
     : d.toLocaleDateString([], { day: "numeric", month: "short" });
 };
 
-const CHAT = { account: null, peer: null, timer: null, q: "", filter: "all" };
+const CHAT = { account: null, peer: null, q: "", filter: "all", replyTo: null };
 let ALL_DIALOGS = [];
+let UPD_CURSOR = 0;
+let UPD_RUNNING = false;
+
+async function loadChats() {
+  syncChatAccountSelect();
+  if (!ACCOUNTS.length) {
+    $("dialogs-list").innerHTML = `<div class="empty">No accounts yet.</div>`;
+    $("messages-list").innerHTML = "";
+    return;
+  }
+  if (!CHAT.account || !ACCOUNTS.some((a) => a.id === CHAT.account)) {
+    CHAT.account = ACCOUNTS[0].id;
+    CHAT.peer = null;
+  }
+  $("chat-account").value = CHAT.account;
+  await loadDialogs();
+  startUpdatesLoop();
+}
+
+// Long-poll real-time loop: the server holds the request until an event lands
+// (message / delete / typing), so updates arrive instantly with no re-render fade.
+async function startUpdatesLoop() {
+  if (UPD_RUNNING) return;
+  UPD_RUNNING = true;
+  while (UPD_RUNNING) {
+    try {
+      if (!CHAT.account) { await sleep(2000); continue; }
+      const res = await fetch(
+        `/api/updates?account_id=${encodeURIComponent(CHAT.account)}&cursor=${UPD_CURSOR}`);
+      if (!res.ok) { await sleep(3000); continue; }
+      const data = await res.json();
+      UPD_CURSOR = data.cursor || UPD_CURSOR;
+      applyUpdates(data.events || []);
+    } catch (e) {
+      await sleep(3000);
+    }
+  }
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function applyUpdates(events) {
+  events.forEach((ev) => {
+    if (ev.t === "msg") onRealtimeMessage(ev);
+    else if (ev.t === "del") onRealtimeDelete(ev);
+    else if (ev.t === "typing") onRealtimeTyping(ev);
+    else if (ev.t === "status" && CHAT.peer) refreshPresence();
+  });
+}
+
+function dialogRowHTML(d) {
+  return `
+    ${avatarHTML(CHAT.account, d.peer_id, d.title)}
+    <div class="meta">
+      <div class="title">${esc(d.title)}</div>
+      <div class="sub">${d.last_out ? "You: " : ""}${esc(d.last_text)}</div>
+    </div>
+    ${d.unread ? `<div class="badge">${d.unread > 99 ? "99+" : d.unread}</div>` : ""}
+    <div class="sub">${esc(fmtClock(d.last_date))}</div>
+  `;
+}
+
+// Patch one dialog row in place (no list rebuild, no fade): update its
+// preview, move it to the top. Brand-new chats get a single entrance pop.
+function patchDialog(d) {
+  const list = $("dialogs-list");
+  let row = list.querySelector(`[data-peer="${d.peer_id}"]`);
+  if (!row) {
+    const idx = ALL_DIALOGS.findIndex((x) => x.peer_id === d.peer_id);
+    if (idx >= 0) ALL_DIALOGS[idx] = d; else ALL_DIALOGS.unshift(d);
+    renderDialogs();
+    const fresh = list.querySelector(`[data-peer="${d.peer_id}"]`);
+    if (fresh) fresh.classList.add("fresh");
+    return;
+  }
+  const idx = ALL_DIALOGS.findIndex((x) => x.peer_id === d.peer_id);
+  if (idx >= 0) ALL_DIALOGS[idx] = d;
+  row.innerHTML = dialogRowHTML(d);
+  row.classList.toggle("active", CHAT.peer === d.peer_id);
+  list.prepend(row);
+}
+
+function onRealtimeMessage(ev) {
+  const known = ALL_DIALOGS.find((d) => d.peer_id === ev.peer);
+  const preview = ev.text || (
+    { photo: "[photo]", video: "[video]", round: "[video message]", voice: "[voice message]", audio: "[audio]", sticker: "[sticker]" }[ev.kind] || "[file]");
+  if (!known) {
+    // Unknown peer (brand-new chat): refresh once to learn its title.
+    loadDialogs(true);
+    if (ev.peer === CHAT.peer) appendMessageNode({ ...ev, id: ev.id }, true);
+    return;
+  }
+  patchDialog({
+    ...known,
+    last_text: (ev.out ? "" : "") + preview.slice(0, 100),
+    last_date: ev.date,
+    last_out: !!ev.out,
+    unread: (known.unread || 0) + ((ev.out || ev.peer === CHAT.peer) ? 0 : 1),
+  });
+  if (ev.peer === CHAT.peer) {
+    appendMessageNode({ ...ev, id: ev.id }, true);
+    api("/chats/read", {
+      method: "POST",
+      body: JSON.stringify({ account_id: CHAT.account, peer_id: CHAT.peer }),
+    }).catch(() => {});
+  }
+}
+
+function onRealtimeDelete(ev) {
+  (ev.items || []).forEach((item) => {
+    if (ev.peer !== CHAT.peer) return;
+    const node = document.querySelector(`#messages-list [data-mid="${item.id}"]`);
+    if (node) node.replaceWith(messageNode({ ...item, out: node.classList.contains("out"), deleted: true }, false));
+  });
+  loadDialogs(true);
+}
+
+let TYPING_TIMER = null;
+function onRealtimeTyping(ev) {
+  if (!CHAT.peer) return;
+  if (!(ev.peers || []).includes(CHAT.peer)) return;
+  const status = $("thread-status");
+  if (ev.typing) {
+    status.textContent = "typing...";
+    status.dataset.typing = "1";
+    if (TYPING_TIMER) clearTimeout(TYPING_TIMER);
+    TYPING_TIMER = setTimeout(() => {
+      if (status.dataset.typing) { delete status.dataset.typing; refreshPresence(); }
+    }, 4000);
+  } else if (status.dataset.typing) {
+    delete status.dataset.typing;
+    refreshPresence();
+  }
+}
+
+function refreshPresence() {
+  if (!CHAT.account || !CHAT.peer) return;
+  const status = $("thread-status");
+  if (status.dataset.typing) return;
+  api(`/chats/presence?account_id=${encodeURIComponent(CHAT.account)}&peer_id=${CHAT.peer}`)
+    .then((d) => {
+      if (status.dataset.typing) return;
+      status.textContent = d.status || "";
+      syncMuteButton(!!d.muted);
+    })
+    .catch(() => {});
+}
 
 const photoURL = (accId, peerId) =>
   `/api/photo?account_id=${encodeURIComponent(accId)}&peer_id=${peerId}`;
@@ -371,33 +515,15 @@ function mediaHTML(m) {
   }
 }
 
-async function loadChats() {
-  if (CHAT.timer) { clearInterval(CHAT.timer); CHAT.timer = null; }
-  syncChatAccountSelect();
-  if (!ACCOUNTS.length) {
-    $("dialogs-list").innerHTML = `<div class="empty">No accounts yet.</div>`;
-    $("messages-list").innerHTML = "";
-    return;
-  }
-  if (!CHAT.account || !ACCOUNTS.some((a) => a.id === CHAT.account)) {
-    CHAT.account = ACCOUNTS[0].id;
-    CHAT.peer = null;
-  }
-  $("chat-account").value = CHAT.account;
-  await loadDialogs();
-  CHAT.timer = setInterval(async () => {
-    if ($("tab-chats").classList.contains("hidden")) return;
-    await loadDialogs(true);
-    if (CHAT.peer) await loadHistory(false);
-  }, 5000);
-}
-
 $("chat-account").onchange = async () => {
   CHAT.account = $("chat-account").value;
   CHAT.peer = null;
+  CHAT.replyTo = null;
+  syncReplyBar();
   $("thread-title").textContent = "Select a chat";
   $("thread-status").textContent = "";
   $("messages-list").innerHTML = "";
+  UPD_CURSOR = 0;
   await loadDialogs();
 };
 
@@ -418,19 +544,69 @@ function renderDialogs() {
   rows.forEach((d) => {
     const row = document.createElement("div");
     row.className = "row dialog" + (CHAT.peer === d.peer_id ? " active" : "");
-    row.innerHTML = `
-      ${avatarHTML(CHAT.account, d.peer_id, d.title)}
-      <div class="meta">
-        <div class="title">${esc(d.title)}</div>
-        <div class="sub">${d.last_out ? "You: " : ""}${esc(d.last_text)}</div>
-      </div>
-      ${d.unread ? `<div class="badge">${d.unread > 99 ? "99+" : d.unread}</div>` : ""}
-      <div class="sub">${esc(fmtClock(d.last_date))}</div>
-    `;
+    row.dataset.peer = d.peer_id;
+    row.innerHTML = dialogRowHTML(d);
     row.onclick = () => openThread(d.peer_id, d.title);
     list.appendChild(row);
   });
 }
+
+function messageNode(m, fresh) {
+  const wrap = document.createElement("div");
+  wrap.className = "msg" + (m.out ? " out" : "") + (fresh ? " fresh" : "") + (m.deleted ? " deleted" : "");
+  if (m.id != null) wrap.dataset.mid = m.id;
+  const isMedia = m.kind && m.kind !== "text";
+  const tools = m.deleted ? `<span class="deleted-tag">deleted</span>` : `
+    <button class="msg-act" data-act="reply" title="Reply">
+      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17 4 12l5-5M4 12h9a7 7 0 0 1 7 7v1"/></svg>
+    </button>
+    ${m.text ? `<button class="msg-act" data-act="copy" title="Copy">
+      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+    </button>` : ""}`;
+  wrap.innerHTML = `
+    ${isMedia ? mediaHTML(m) : ""}
+    ${m.text ? `<div class="bubble">${esc(m.text)}</div>` : (isMedia ? "" : `<div class="bubble"><i>empty message</i></div>`)}
+    <div class="msg-meta"><div class="msg-time">${esc(fmtClock(m.date))}</div><div class="msg-tools">${tools}</div></div>
+  `;
+  wrap.querySelectorAll(".msg-act").forEach((b) => {
+    b.onclick = (e) => {
+      e.stopPropagation();
+      if (b.dataset.act === "copy" && m.text) {
+        try { navigator.clipboard.writeText(m.text); } catch (err) { /* clipboard denied */ }
+      } else if (b.dataset.act === "reply") {
+        CHAT.replyTo = { id: m.id, text: (m.text || "[media]").slice(0, 80) };
+        syncReplyBar();
+        $("composer-input").focus();
+      }
+    };
+  });
+  return wrap;
+}
+
+function appendMessageNode(m, stick) {
+  const box = $("messages-list");
+  const empty = box.querySelector(".empty");
+  if (empty) empty.remove();
+  // Day pill when the date changes.
+  const day = fmtDay(m.date);
+  const pills = box.querySelectorAll(".date-pill");
+  if (day && (!pills.length || pills[pills.length - 1].textContent !== day)) {
+    const pill = document.createElement("div");
+    pill.className = "date-pill";
+    pill.textContent = day;
+    box.appendChild(pill);
+  }
+  box.appendChild(messageNode(m, true));
+  if (stick || nearBottom(box)) box.scrollTop = box.scrollHeight;
+}
+
+function syncReplyBar() {
+  const bar = $("reply-bar");
+  if (!CHAT.replyTo) { bar.classList.add("hidden"); return; }
+  bar.classList.remove("hidden");
+  $("reply-text").textContent = CHAT.replyTo.text;
+}
+$("btn-reply-cancel").onclick = () => { CHAT.replyTo = null; syncReplyBar(); };
 
 async function loadDialogs(silent) {
   if (!CHAT.account) return;
@@ -475,9 +651,41 @@ function setThreadHeader(peer_id, title) {
 
 async function openThread(peer_id, title) {
   setThreadHeader(peer_id, title);
+  CHAT.replyTo = null;
+  syncReplyBar();
   document.querySelectorAll("#dialogs-list .dialog").forEach((el) => el.classList.remove("active"));
+  const active = document.querySelector(`#dialogs-list [data-peer="${peer_id}"]`);
+  if (active) active.classList.add("active");
   await loadHistory(true);
   await loadDialogs(true);
+  restoreDraft();
+  api("/chats/read", {
+    method: "POST",
+    body: JSON.stringify({ account_id: CHAT.account, peer_id }),
+  }).catch(() => {});
+  refreshPresence();
+}
+
+function draftKey() {
+  return CHAT.account && CHAT.peer ? `draft:${CHAT.account}:${CHAT.peer}` : null;
+}
+function saveDraft() {
+  const k = draftKey();
+  if (!k) return;
+  try {
+    const v = $("composer-input").value;
+    if (v) localStorage.setItem(k, v);
+    else localStorage.removeItem(k);
+  } catch (e) { /* storage unavailable */ }
+}
+function restoreDraft() {
+  const k = draftKey();
+  let v = "";
+  if (k) {
+    try { v = localStorage.getItem(k) || ""; } catch (e) { /* ignore */ }
+  }
+  $("composer-input").value = v;
+  syncComposerButtons();
 }
 
 $("btn-back").onclick = () => {
@@ -517,29 +725,26 @@ async function loadHistory(scroll) {
       pill.textContent = day;
       box.appendChild(pill);
     }
-    const wrap = document.createElement("div");
-    wrap.className = "msg" + (m.out ? " out" : "");
-    const isMedia = m.kind && m.kind !== "text";
-    wrap.innerHTML = `
-      ${isMedia ? mediaHTML(m) : ""}
-      ${m.text ? `<div class="bubble">${esc(m.text)}</div>` : (isMedia ? "" : `<div class="bubble"><i>empty message</i></div>`)}
-      <div class="msg-time">${esc(fmtClock(m.date))}</div>
-    `;
-    box.appendChild(wrap);
+    box.appendChild(messageNode(m, false));
   });
   if (stick) box.scrollTop = box.scrollHeight;
+  applyThreadFilter();
 }
 
 async function sendCurrent() {
   const input = $("composer-input");
   const text = input.value.trim();
   if (!text || !CHAT.account || !CHAT.peer) return;
+  const replyTo = CHAT.replyTo ? CHAT.replyTo.id : null;
   input.value = "";
+  CHAT.replyTo = null;
+  syncReplyBar();
+  try { localStorage.removeItem(draftKey()); } catch (e) { /* ignore */ }
   syncComposerButtons();
   try {
     await api("/chats/send", {
       method: "POST",
-      body: JSON.stringify({ account_id: CHAT.account, peer_id: CHAT.peer, text }),
+      body: JSON.stringify({ account_id: CHAT.account, peer_id: CHAT.peer, text, reply_to: replyTo }),
     });
   } catch (e) {
     alert(e.message);
@@ -557,11 +762,72 @@ function syncComposerButtons() {
   $("btn-send").classList.toggle("hidden", !hasText);
 }
 
+function uiPref(key, fallback) {
+  try {
+    const all = JSON.parse(localStorage.getItem("foggy-ui") || "{}");
+    return all[key] !== undefined ? all[key] : fallback;
+  } catch (e) {
+    return fallback;
+  }
+}
+
 $("btn-send").onclick = sendCurrent;
 $("composer-input").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") sendCurrent();
+  if (e.key !== "Enter") return;
+  const enterSends = uiPref("enterSend", true);
+  if ((enterSends && !e.shiftKey) || (!enterSends && (e.ctrlKey || e.metaKey))) {
+    e.preventDefault();
+    sendCurrent();
+  }
 });
-$("composer-input").addEventListener("input", syncComposerButtons);
+$("composer-input").addEventListener("input", () => { syncComposerButtons(); saveDraft(); });
+
+// ------------------------------------------------- thread search / mute / export
+function applyThreadFilter() {
+  const q = (($("thread-search-input") || {}).value || "").toLowerCase();
+  document.querySelectorAll("#messages-list .msg").forEach((node) => {
+    node.style.display = !q || (node.textContent || "").toLowerCase().includes(q) ? "" : "none";
+  });
+}
+$("btn-thread-search").onclick = () => {
+  const box = $("thread-search");
+  box.classList.toggle("hidden");
+  if (box.classList.contains("hidden")) {
+    $("thread-search-input").value = "";
+    applyThreadFilter();
+  } else {
+    $("thread-search-input").focus();
+  }
+};
+$("thread-search-input").addEventListener("input", applyThreadFilter);
+
+let CHAT_MUTED = false;
+function syncMuteButton(muted) {
+  CHAT_MUTED = !!muted;
+  $("btn-mute").classList.toggle("muted-on", CHAT_MUTED);
+}
+$("btn-mute").onclick = async () => {
+  if (!CHAT.account || !CHAT.peer) return;
+  try {
+    const d = await api("/chats/mute", {
+      method: "POST",
+      body: JSON.stringify({ account_id: CHAT.account, peer_id: CHAT.peer, mute: !CHAT_MUTED }),
+    });
+    syncMuteButton(!!d.muted);
+  } catch (e) {
+    alert(e.message);
+  }
+};
+$("btn-export").onclick = () => {
+  if (!CHAT.account || !CHAT.peer) return;
+  const url = `/api/chats/export?account_id=${encodeURIComponent(CHAT.account)}&peer_id=${CHAT.peer}&limit=200`;
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `chat-${CHAT.peer}.txt`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+};
 
 async function sendFileBlob(blob, filename, caption) {
   if (!CHAT.account || !CHAT.peer) return;
@@ -569,11 +835,14 @@ async function sendFileBlob(blob, filename, caption) {
   fd.append("account_id", CHAT.account);
   fd.append("peer_id", String(CHAT.peer));
   fd.append("caption", caption || "");
+  fd.append("reply_to", CHAT.replyTo ? String(CHAT.replyTo.id) : "0");
   fd.append("file", blob, filename);
   const res = await fetch("/api/chats/send_file", { method: "POST", body: fd });
   let data = {};
   try { data = await res.json(); } catch (e) { /* empty */ }
   if (!res.ok) throw new Error(data.detail || `Upload failed (${res.status})`);
+  CHAT.replyTo = null;
+  syncReplyBar();
   await loadHistory(true);
   await loadDialogs(true);
 }
@@ -626,91 +895,149 @@ $("btn-mic").onclick = async () => {
   $("btn-mic").classList.add("recording");
 };
 
-// ------------------------------------------------- menu, settings, new chat
-function closeMenus() {
-  $("main-menu").classList.add("hidden");
+// ------------------------------------------------- drawer, prefs, contacts, AI
+function openDrawer() {
+  $("drawer").classList.add("open");
+  $("drawer-backdrop").classList.remove("hidden");
 }
-$("btn-menu").onclick = (e) => {
+function closeDrawer() {
+  $("drawer").classList.remove("open");
+  $("drawer-backdrop").classList.add("hidden");
+}
+$("btn-drawer").onclick = (e) => {
   e.stopPropagation();
-  $("main-menu").classList.toggle("hidden");
+  $("drawer").classList.contains("open") ? closeDrawer() : openDrawer();
 };
-document.addEventListener("click", (e) => {
-  if (!$("main-menu").classList.contains("hidden") && !$("main-menu").contains(e.target)) closeMenus();
-});
+$("drawer-backdrop").onclick = closeDrawer;
 
-function openSettings() {
-  closeMenus();
-  fillSettings();
-  $("modal-settings").classList.remove("hidden");
+function setUiPref(key, value) {
+  let all = {};
+  try { all = JSON.parse(localStorage.getItem("foggy-ui") || "{}"); } catch (e) { /* ignore */ }
+  all[key] = value;
+  try { localStorage.setItem("foggy-ui", JSON.stringify(all)); } catch (e) { /* ignore */ }
 }
-function fillSettings() {
-  const acc = ACCOUNTS.find((a) => a.id === CHAT.account) || ACCOUNTS[0];
-  $("set-msg").textContent = "";
-  if (!acc) {
-    $("who-name").textContent = "—";
-    $("set-phone").textContent = "—";
-    $("set-username").textContent = "—";
+function applyUiPrefs() {
+  document.body.dataset.density = uiPref("density", "comfort");
+  document.body.dataset.font = uiPref("font", "m");
+  $("pref-enter").checked = uiPref("enterSend", true);
+  document.querySelectorAll("#density-pills .pill").forEach((p) =>
+    p.classList.toggle("active", p.dataset.d === uiPref("density", "comfort")));
+  document.querySelectorAll("#font-pills .pill").forEach((p) =>
+    p.classList.toggle("active", p.dataset.f === uiPref("font", "m")));
+}
+document.querySelectorAll("#density-pills .pill").forEach((p) => {
+  p.onclick = () => { setUiPref("density", p.dataset.d); applyUiPrefs(); };
+});
+document.querySelectorAll("#font-pills .pill").forEach((p) => {
+  p.onclick = () => { setUiPref("font", p.dataset.f); applyUiPrefs(); };
+});
+$("pref-enter").onchange = () => setUiPref("enterSend", $("pref-enter").checked);
+
+async function loadServerPrefs() {
+  try {
+    const p = await api("/prefs");
+    $("pref-ghost").checked = !!p.ghost;
+    $("pref-deleted").checked = p.show_deleted !== false;
+  } catch (e) { /* prefs unavailable offline */ }
+}
+$("pref-ghost").onchange = async () => {
+  try {
+    await api("/prefs", { method: "POST", body: JSON.stringify({ ghost: $("pref-ghost").checked }) });
+  } catch (e) {
+    alert(e.message);
+    $("pref-ghost").checked = !$("pref-ghost").checked;
+  }
+};
+$("pref-deleted").onchange = async () => {
+  try {
+    await api("/prefs", { method: "POST", body: JSON.stringify({ show_deleted: $("pref-deleted").checked }) });
+    if (CHAT.peer) await loadHistory(true);
+  } catch (e) {
+    alert(e.message);
+    $("pref-deleted").checked = !$("pref-deleted").checked;
+  }
+};
+
+async function loadContacts() {
+  if (!CHAT.account) {
+    $("contacts-list").innerHTML = `<div class="empty">No accounts yet.</div>`;
     return;
   }
-  $("who-name").textContent = acc.label || acc.phone || "—";
-  $("set-avatar-initial").textContent = initial(acc.label || acc.phone);
-  const img = $("set-avatar-img");
-  img.style.display = "";
-  img.src = photoURL(acc.id, acc.user_id || 0);
-  img.onerror = () => { img.style.display = "none"; };
-  $("set-phone").textContent = acc.phone || "—";
-  $("set-username").textContent = acc.username ? "@" + acc.username : "—";
+  let contacts = [];
+  try {
+    const data = await api(`/contacts?account_id=${encodeURIComponent(CHAT.account)}`);
+    contacts = data.contacts || [];
+  } catch (e) {
+    $("contacts-list").innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+    return;
+  }
+  const list = $("contacts-list");
+  list.innerHTML = contacts.length ? "" : `<div class="empty">No contacts yet.</div>`;
+  contacts.forEach((c) => {
+    const row = document.createElement("div");
+    row.className = "row";
+    row.style.cursor = "pointer";
+    row.innerHTML = `
+      ${avatarHTML(CHAT.account, c.id, c.name)}
+      <div class="meta">
+        <div class="title">${esc(c.name)}</div>
+        <div class="sub">${esc(c.username ? "@" + c.username : (c.phone || ""))}</div>
+      </div>
+    `;
+    row.onclick = async () => {
+      switchTab("chats");
+      await openThread(c.id, c.name);
+    };
+    list.appendChild(row);
+  });
 }
-$("btn-open-settings").onclick = openSettings;
-$("btn-avatar").onclick = openSettings;
-$("menu-settings").onclick = openSettings;
-$("btn-close-settings").onclick = () => $("modal-settings").classList.add("hidden");
 
-$("btn-set-backup").onclick = async () => {
-  $("set-msg").textContent = "Saving backup…";
-  try {
-    await api("/backup/now", { method: "POST", body: JSON.stringify({ label: "manual" }) });
-    $("set-msg").textContent = "Backup saved.";
-  } catch (e) {
-    $("set-msg").textContent = e.message;
-  }
+// ------------------------------------------------- assistant panel (UI shell)
+function aiLoad() {
+  try { return JSON.parse(localStorage.getItem("foggy-ai") || "[]"); }
+  catch (e) { return []; }
+}
+function aiSave(items) {
+  try { localStorage.setItem("foggy-ai", JSON.stringify(items.slice(-100))); } catch (e) { /* ignore */ }
+}
+function aiRender() {
+  const box = $("ai-messages");
+  const items = aiLoad();
+  box.innerHTML = items.length ? "" : `<div class="empty">Describe a task. Full AI arrives in a later update.</div>`;
+  items.forEach((m) => {
+    const wrap = document.createElement("div");
+    wrap.className = "msg" + (m.role === "user" ? " out" : "");
+    wrap.innerHTML = `<div class="bubble">${esc(m.text)}</div>`;
+    box.appendChild(wrap);
+  });
+  box.scrollTop = box.scrollHeight;
+}
+$("btn-ai").onclick = () => {
+  closeDrawer();
+  aiRender();
+  $("ai-panel").classList.remove("hidden");
 };
-$("btn-set-export").onclick = async () => {
-  $("set-msg").textContent = "Exporting…";
-  try {
-    await api("/sync/export", { method: "POST" });
-    $("set-msg").textContent = "Sync folder updated.";
-  } catch (e) {
-    $("set-msg").textContent = e.message;
-  }
-};
-$("btn-open-add-account").onclick = () => {
-  $("modal-settings").classList.add("hidden");
-  resetAccountModal();
-  $("modal-account").classList.remove("hidden");
-};
-
-$("menu-saved").onclick = async () => {
-  closeMenus();
-  if (!ALL_DIALOGS.length) await loadDialogs();
-  const saved = ALL_DIALOGS.find((d) => d.is_saved);
-  if (saved) {
-    if ($("tab-chats").classList.contains("hidden")) switchTab("chats");
-    await openThread(saved.peer_id, saved.title);
-  } else {
-    alert("Saved Messages is not available for this account.");
-  }
-};
-$("menu-add").onclick = () => {
-  closeMenus();
-  resetAccountModal();
-  $("modal-account").classList.remove("hidden");
-};
-$("menu-logout").onclick = async () => {
-  closeMenus();
-  await api("/logout", { method: "POST" });
-  location.reload();
-};
+$("btn-ai-close").onclick = () => $("ai-panel").classList.add("hidden");
+function aiSend() {
+  const input = $("ai-input");
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = "";
+  const items = aiLoad();
+  items.push({ role: "user", text });
+  aiSave(items);
+  aiRender();
+  setTimeout(() => {
+    const now = aiLoad();
+    now.push({ role: "bot", text: `Noted: “${text.slice(0, 120)}”. Task execution lands with the AI update — this panel is just the shell for now.` });
+    aiSave(now);
+    if (!$("ai-panel").classList.contains("hidden")) aiRender();
+  }, 600);
+}
+$("btn-ai-send").onclick = aiSend;
+$("ai-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") aiSend();
+});
 
 $("btn-new-chat").onclick = () => {
   $("newchat-error").textContent = "";

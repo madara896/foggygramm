@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Tuple
 
-from telethon import TelegramClient, utils
+from telethon import TelegramClient, events, utils
 from telethon.errors import (
     FloodWaitError,
     PhoneCodeExpiredError,
@@ -24,6 +24,7 @@ from telethon.errors import (
     SessionPasswordNeededError,
 )
 from telethon.sessions import StringSession
+from telethon.tl import functions
 from telethon.tl.types import (
     Channel,
     Chat,
@@ -31,6 +32,10 @@ from telethon.tl.types import (
     DocumentAttributeSticker,
     DocumentAttributeVideo,
     MessageMediaPhoto,
+    PeerNotifySettings,
+    SendMessageCancelAction,
+    UpdateChatUserTyping,
+    UpdateUserTyping,
     User,
     UserStatusEmpty,
     UserStatusLastMonth,
@@ -39,6 +44,8 @@ from telethon.tl.types import (
     UserStatusOnline,
     UserStatusRecently,
 )
+
+from .prefs import load_prefs, save_deleted as _persist_deleted
 
 
 class PendingLogin:
@@ -49,13 +56,18 @@ class PendingLogin:
 
 
 class TelegramManager:
-    def __init__(self) -> None:
+    def __init__(self, data_dir=None) -> None:
         self.clients: Dict[str, TelegramClient] = {}
         self.pending: Dict[str, PendingLogin] = {}
         self._lock = asyncio.Lock()
         # (account_id, peer_id) -> Telethon input entity, filled by get_dialogs
         # so history/send reuse the exact peer without extra lookups.
         self._entities: Dict[tuple, object] = {}
+        # Real-time engine: per-account event queue + message cache.
+        self._updates: Dict[str, list] = {}
+        self._seq: Dict[str, int] = {}
+        self._msg_cache: Dict[tuple, list] = {}
+        self._data_dir = Path(data_dir) if data_dir else None
 
     # ------------------------------------------------------------ login flow
     async def start_login(self, api_id: int, api_hash: str, phone: str) -> str:
@@ -121,8 +133,15 @@ class TelegramManager:
         if not await client.is_user_authorized():
             await client.disconnect()
             raise RuntimeError("Session no longer valid")
-        # Feature handlers get attached here in later milestones.
+        # Real-time engine: live message / delete / typing events.
+        client.add_event_handler(
+            self._handle_new_message(account_id), events.NewMessage)
+        client.add_event_handler(
+            self._handle_deleted(account_id), events.MessageDeleted)
+        client.add_event_handler(
+            self._handle_user_update(account_id), events.UserUpdate)
         self.clients[account_id] = client
+        await self._apply_ghost(account_id)
         return client
 
     def is_connected(self, account_id: str) -> bool:
@@ -140,6 +159,202 @@ class TelegramManager:
     async def disconnect_all(self) -> None:
         for account_id in list(self.clients.keys()):
             await self.disconnect_account(account_id)
+
+    # ------------------------------------------------------- real-time engine
+    def _push_update(self, account_id: str, payload: dict) -> None:
+        dq = self._updates.setdefault(account_id, [])
+        seq = self._seq.get(account_id, 0) + 1
+        self._seq[account_id] = seq
+        payload = dict(payload)
+        payload["i"] = seq
+        dq.append(payload)
+        del dq[:-300]
+
+    def poll_updates(self, account_id: str, cursor: int) -> tuple:
+        try:
+            cursor = int(cursor or 0)
+        except (TypeError, ValueError):
+            cursor = 0
+        evs = [e for e in self._updates.get(account_id, []) if e.get("i", 0) > cursor]
+        return evs, (evs[-1]["i"] if evs else cursor)
+
+    def _cache_message(self, account_id: str, peer: int, record: dict) -> None:
+        key = (account_id, int(peer))
+        cache = self._msg_cache.setdefault(key, [])
+        cache = [r for r in cache if r.get("id") != record.get("id")]
+        cache.append(record)
+        self._msg_cache[key] = cache[-100:]
+
+    def _find_cached(self, account_id: str, peer: int, msg_id: int) -> dict | None:
+        for r in self._msg_cache.get((account_id, int(peer)), []):
+            if r.get("id") == int(msg_id):
+                return r
+        return None
+
+    def _handle_new_message(self, account_id: str):
+        async def handler(event):
+            try:
+                m = event.message
+                peer = utils.get_peer_id(m.peer_id)
+                kind, extra = self._media_kind(m)
+                rec = {
+                    "id": m.id,
+                    "text": m.message or "",
+                    "date": m.date.isoformat() if m.date else None,
+                    "out": bool(m.out),
+                    "kind": kind,
+                }
+                rec.update(extra)
+                self._cache_message(account_id, peer, rec)
+                self._push_update(account_id, {"t": "msg", "peer": peer, **rec})
+            except Exception:
+                pass
+        return handler
+
+    def _handle_deleted(self, account_id: str):
+        async def handler(event):
+            try:
+                peer = None
+                raw_peer = getattr(event, "peer", None)
+                if raw_peer is not None:
+                    try:
+                        peer = utils.get_peer_id(raw_peer)
+                    except Exception:
+                        peer = None
+                if peer is None:
+                    peer = getattr(event, "chat_id", None)
+                if peer is None:
+                    return
+                items = []
+                for mid in event.deleted_ids or []:
+                    cached = self._find_cached(account_id, peer, mid)
+                    items.append({
+                        "id": int(mid),
+                        "text": (cached or {}).get("text", ""),
+                        "kind": (cached or {}).get("kind", "text"),
+                        "date": (cached or {}).get("date"),
+                        "out": bool((cached or {}).get("out")),
+                    })
+                if self._data_dir is not None:
+                    _persist_deleted(self._data_dir, account_id, peer, items)
+                self._push_update(account_id, {"t": "del", "peer": int(peer), "items": items})
+            except Exception:
+                pass
+        return handler
+
+    def _handle_user_update(self, account_id: str):
+        async def handler(event):
+            try:
+                upd = event.original_update
+                if isinstance(upd, (UpdateUserTyping, UpdateChatUserTyping)):
+                    active = not isinstance(upd.action, SendMessageCancelAction)
+                    if isinstance(upd, UpdateChatUserTyping):
+                        bare = upd.chat_id
+                        cands = [bare, -bare, -(1000000000000 + bare)]
+                    else:
+                        cands = [upd.user_id]
+                    self._push_update(account_id, {
+                        "t": "typing", "peers": cands,
+                        "user_id": getattr(upd, "user_id", None),
+                        "typing": bool(active),
+                    })
+                else:
+                    self._push_update(account_id, {"t": "status"})
+            except Exception:
+                pass
+        return handler
+
+    # ------------------------------------------------------ ghost (offline)
+    async def _apply_ghost(self, account_id: str) -> None:
+        if self._data_dir is None:
+            return
+        try:
+            if not load_prefs(self._data_dir).get("ghost"):
+                return
+        except Exception:
+            return
+        client = self.clients.get(account_id)
+        if client and client.is_connected():
+            try:
+                await client(functions.account.UpdateStatusRequest(offline=True))
+            except Exception:
+                pass
+
+    async def set_ghost(self, enabled: bool) -> None:
+        for account_id, client in list(self.clients.items()):
+            if client and client.is_connected():
+                try:
+                    await client(functions.account.UpdateStatusRequest(offline=bool(enabled)))
+                except Exception:
+                    pass
+
+    # ------------------------------------------------------------- contacts
+    async def get_contacts(self, account_id: str) -> list[dict]:
+        client = self._live_client(account_id)
+        contacts = await client.get_contacts()
+        out = []
+        for u in contacts or []:
+            if not isinstance(u, User):
+                continue
+            out.append({
+                "id": u.id,
+                "name": utils.get_display_name(u) or "Unknown",
+                "username": u.username,
+                "phone": u.phone,
+            })
+        return out
+
+    # --------------------------------------------------- read / mute / misc
+    async def mark_read(self, account_id: str, peer_id: int) -> None:
+        client = self._live_client(account_id)
+        entity = await self._resolve_peer(account_id, peer_id)
+        await client.send_read_acknowledge(entity)
+
+    async def set_muted(self, account_id: str, peer_id: int, mute: bool) -> dict:
+        client = self._live_client(account_id)
+        entity = await self._resolve_peer(account_id, peer_id)
+        try:
+            peer = await client.get_input_entity(entity)
+        except Exception:
+            peer = entity
+        until = 2147483647 if mute else 0
+        await client(functions.account.UpdateNotifySettingsRequest(
+            peer=peer, settings=PeerNotifySettings(mute_until=until)))
+        return {"muted": bool(mute)}
+
+    async def is_muted(self, account_id: str, peer_id: int) -> bool:
+        import time as _time
+
+        client = self._live_client(account_id)
+        entity = await self._resolve_peer(account_id, peer_id)
+        try:
+            peer = await client.get_input_entity(entity)
+        except Exception:
+            peer = entity
+        try:
+            settings = await client(functions.account.GetNotifySettingsRequest(peer=peer))
+            until = getattr(settings, "mute_until", 0) or 0
+            return bool(until == 2147483647 or until > int(_time.time()))
+        except Exception:
+            return False
+
+    async def export_history(self, account_id: str, peer_id: int,
+                             limit: int = 200) -> str:
+        client = self._live_client(account_id)
+        entity = await self._resolve_peer(account_id, peer_id)
+        messages = await client.get_messages(entity, limit=max(1, min(int(limit or 200), 500)))
+        lines = []
+        for m in reversed(messages or []):
+            if m is None:
+                continue
+            who = "You" if m.out else "Them"
+            when = m.date.strftime("%Y-%m-%d %H:%M") if m.date else "?"
+            text = m.message or ""
+            if not text and m.media:
+                kind, _ = self._media_kind(m)
+                text = f"[{kind}]"
+            lines.append(f"[{when}] {who}: {text}")
+        return "\n".join(lines) + "\n"
 
     # ------------------------------------------------------------- M3 chats
     def _live_client(self, account_id: str):
@@ -289,7 +504,12 @@ class TelegramManager:
 
     async def get_history(self, account_id: str, peer_id: int,
                           limit: int = 30, offset_id: int = 0) -> list[dict]:
-        """Oldest-first messages for one conversation, media classified."""
+        """Oldest-first messages for one conversation, media classified.
+
+        Saved deleted messages (anti-delete vault) are merged in and flagged.
+        """
+        from .prefs import deleted_for, load_prefs
+
         client = self._live_client(account_id)
         limit = max(1, min(int(limit or 30), 50))
         entity = await self._resolve_peer(account_id, peer_id)
@@ -297,6 +517,7 @@ class TelegramManager:
             entity, limit=limit, offset_id=int(offset_id or 0)
         )
         out = []
+        seen = set()
         for m in messages or []:
             if m is None:
                 continue
@@ -308,13 +529,42 @@ class TelegramManager:
                 "out": bool(m.out),
                 "has_media": m.media is not None,
                 "kind": kind,
+                "deleted": False,
             }
             record.update(extra)
             out.append(record)
-        out.reverse()
+            seen.add(m.id)
+            self._cache_message(account_id, peer_id, {
+                "id": m.id, "text": m.message or "", "kind": kind,
+                "date": record["date"], "out": bool(m.out), **extra,
+            })
+        if self._data_dir is not None:
+            try:
+                show = load_prefs(self._data_dir).get("show_deleted", True)
+            except Exception:
+                show = True
+            if show:
+                try:
+                    saved = deleted_for(self._data_dir, account_id, peer_id)
+                except Exception:
+                    saved = []
+                for r in saved:
+                    if r.get("id") in seen:
+                        continue
+                    out.append({
+                        "id": r.get("id"),
+                        "text": r.get("text", ""),
+                        "date": r.get("date"),
+                        "out": bool(r.get("out")),
+                        "has_media": False,
+                        "kind": r.get("kind", "text"),
+                        "deleted": True,
+                    })
+        out.sort(key=lambda r: (r.get("id") or 0))
         return out
 
-    async def send_message(self, account_id: str, peer_id: int, text: str) -> dict:
+    async def send_message(self, account_id: str, peer_id: int, text: str,
+                           reply_to: int | None = None) -> dict:
         """Send a text message as one connected account (admin only)."""
         text = (text or "").strip()
         if not text:
@@ -323,7 +573,10 @@ class TelegramManager:
             raise RuntimeError("Message is too long (max 4096 characters)")
         client = self._live_client(account_id)
         entity = await self._resolve_peer(account_id, peer_id)
-        sent = await client.send_message(entity, text)
+        kwargs = {}
+        if reply_to:
+            kwargs["reply_to"] = int(reply_to)
+        sent = await client.send_message(entity, text, **kwargs)
         return {"id": sent.id, "date": sent.date.isoformat() if sent.date else None}
 
     @staticmethod
@@ -443,7 +696,8 @@ class TelegramManager:
         return str(path)
 
     async def send_file(self, account_id: str, peer_id: int, data: bytes,
-                        filename: str, caption: str = "") -> dict:
+                        filename: str, caption: str = "",
+                        reply_to: int | None = None) -> dict:
         """Send a photo/video/file with an optional caption (admin only)."""
         if not data:
             raise RuntimeError("Empty file")
@@ -455,7 +709,10 @@ class TelegramManager:
         entity = await self._resolve_peer(account_id, peer_id)
         try:
             tmp.write_bytes(data)
-            sent = await client.send_file(entity, str(tmp), caption=(caption or "").strip() or None)
+            kwargs = {"caption": (caption or "").strip() or None}
+            if reply_to:
+                kwargs["reply_to"] = int(reply_to)
+            sent = await client.send_file(entity, str(tmp), **kwargs)
         finally:
             try:
                 tmp.unlink()

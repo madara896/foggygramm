@@ -10,22 +10,24 @@ from __future__ import annotations
 
 import asyncio
 import secrets
+import time
 from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .backup import BackupError, BackupManager
 from .config import API_HASH, API_ID, AVATARS_DIR, DATA_DIR, FRONTEND_DIR, MEDIA_DIR, SYNC_DIR, save_api_credentials
+from .prefs import load_prefs, save_prefs
 from .telegram_manager import TelegramManager
 from .vault import Vault, VaultError
 
 app = FastAPI(title="FoggyGramm")
 vault = Vault(DATA_DIR)
-manager = TelegramManager()
+manager = TelegramManager(DATA_DIR)
 backups = BackupManager(DATA_DIR, SYNC_DIR, vault)
 
 # In-memory login tokens (cookie -> {username, role}). Cleared on restart.
@@ -77,6 +79,23 @@ class SendBody(BaseModel):
     account_id: str
     peer_id: int
     text: str
+    reply_to: Optional[int] = None
+
+
+class PrefsBody(BaseModel):
+    ghost: Optional[bool] = None
+    show_deleted: Optional[bool] = None
+
+
+class ReadBody(BaseModel):
+    account_id: str
+    peer_id: int
+
+
+class MuteBody(BaseModel):
+    account_id: str
+    peer_id: int
+    mute: bool
 
 
 # -------------------------------------------------------------------- helpers
@@ -156,8 +175,8 @@ async def _after_vault_replace() -> None:
 
 
 @app.on_event("startup")
-async def _daily_backup_loop() -> None:
-    async def loop() -> None:
+async def _background_loops() -> None:
+    async def daily() -> None:
         while True:
             try:
                 if backups.daily_check():
@@ -166,7 +185,18 @@ async def _daily_backup_loop() -> None:
                 print(f"[foggygramm] daily backup check failed: {exc}")
             await asyncio.sleep(1800)
 
-    asyncio.create_task(loop())
+    async def ghost() -> None:
+        # Re-assert offline status: any Telegram activity can flip it back.
+        while True:
+            try:
+                if load_prefs(DATA_DIR).get("ghost"):
+                    await manager.set_ghost(True)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[foggygramm] ghost re-apply failed: {exc}")
+            await asyncio.sleep(60)
+
+    asyncio.create_task(daily())
+    asyncio.create_task(ghost())
 
 
 # ------------------------------------------------------------------ endpoints
@@ -381,7 +411,8 @@ async def chat_send(body: SendBody, request: Request):
     require_admin(request)
     _require_unlocked()
     try:
-        return await manager.send_message(body.account_id, body.peer_id, body.text)
+        return await manager.send_message(
+            body.account_id, body.peer_id, body.text, body.reply_to)
     except RuntimeError as exc:
         raise HTTPException(400, str(exc))
 
@@ -389,7 +420,7 @@ async def chat_send(body: SendBody, request: Request):
 @app.post("/api/chats/send_file")
 async def chat_send_file(request: Request, account_id: str = Form(...),
                          peer_id: int = Form(...), caption: str = Form(""),
-                         file: UploadFile = File(...)):
+                         reply_to: int = Form(0), file: UploadFile = File(...)):
     require_admin(request)
     _require_unlocked()
     data = await file.read()
@@ -397,9 +428,41 @@ async def chat_send_file(request: Request, account_id: str = Form(...),
         raise HTTPException(400, "Empty file")
     try:
         return await manager.send_file(
-            account_id, peer_id, data, file.filename or "file", caption)
+            account_id, peer_id, data, file.filename or "file", caption,
+            reply_to or None)
     except RuntimeError as exc:
         raise HTTPException(400, str(exc))
+
+
+@app.post("/api/chats/read")
+async def chat_read(body: ReadBody, request: Request):
+    require_admin(request)
+    try:
+        await manager.mark_read(body.account_id, body.peer_id)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc))
+    return {"ok": True}
+
+
+@app.post("/api/chats/mute")
+async def chat_mute(body: MuteBody, request: Request):
+    require_admin(request)
+    try:
+        return await manager.set_muted(body.account_id, body.peer_id, body.mute)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.get("/api/chats/export")
+async def chat_export(account_id: str, peer_id: int, request: Request,
+                      limit: int = 200):
+    require_admin(request)
+    try:
+        text = await manager.export_history(account_id, peer_id, limit)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc))
+    return PlainTextResponse(
+        text, headers={"Content-Disposition": f"attachment; filename=chat-{peer_id}.txt"})
 
 
 @app.get("/api/chats/resolve")
@@ -415,9 +478,55 @@ async def chat_resolve(account_id: str, username: str, request: Request):
 async def chat_presence(account_id: str, peer_id: int, request: Request):
     require_admin(request)
     try:
-        return await manager.get_presence(account_id, peer_id)
+        info = await manager.get_presence(account_id, peer_id)
+        try:
+            info["muted"] = await manager.is_muted(account_id, peer_id)
+        except RuntimeError:
+            pass
+        return info
     except RuntimeError as exc:
         raise HTTPException(400, str(exc))
+
+
+@app.get("/api/contacts")
+async def contacts(account_id: str, request: Request):
+    require_admin(request)
+    try:
+        return {"contacts": await manager.get_contacts(account_id)}
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.get("/api/updates")
+async def updates(account_id: str, request: Request, cursor: int = 0):
+    """Long-poll real-time events (messages, deletes, typing)."""
+    require_admin(request)
+    deadline = time.time() + 20
+    while time.time() < deadline:
+        events, new_cursor = manager.poll_updates(account_id, cursor)
+        if events:
+            return {"events": events, "cursor": new_cursor}
+        await asyncio.sleep(0.5)
+    return {"events": [], "cursor": cursor}
+
+
+@app.get("/api/prefs")
+def prefs_get(request: Request):
+    require_admin(request)
+    return load_prefs(DATA_DIR)
+
+
+@app.post("/api/prefs")
+async def prefs_set(body: PrefsBody, request: Request):
+    require_admin(request)
+    _require_unlocked()
+    patch = {k: v for k, v in
+             {"ghost": body.ghost, "show_deleted": body.show_deleted}.items()
+             if v is not None}
+    prefs = save_prefs(DATA_DIR, patch)
+    if "ghost" in patch:
+        await manager.set_ghost(patch["ghost"])
+    return prefs
 
 
 @app.get("/api/media")

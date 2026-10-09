@@ -275,33 +275,8 @@ input:focus, select:focus {
 }
 .hidden { display: none !important; }
 
-/* --------------------------------------------------------------- dashboard */
-.topbar {
-  display: flex; align-items: center; gap: 14px;
-  padding: 13px 18px; border-radius: 20px;
-  background: linear-gradient(160deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.025));
-  border: 1px solid var(--stroke);
-  -webkit-backdrop-filter: blur(30px) saturate(150%);
-  backdrop-filter: blur(30px) saturate(150%);
-  position: sticky; top: 16px; z-index: 5;
-}
-[data-theme="light"] .topbar { background: linear-gradient(160deg, rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.55)); }
-.spacer { flex: 1; }
-.who { display: flex; align-items: center; gap: 9px; font-size: 14px; }
-.chip {
-  background: rgba(255, 255, 255, 0.09); border: 1px solid var(--stroke-soft);
-  color: var(--muted); font-size: 10.5px; padding: 3px 9px; border-radius: 20px;
-  text-transform: uppercase; letter-spacing: 0.06em;
-}
-[data-theme="light"] .chip { background: rgba(0, 0, 0, 0.05); }
+/* ------------------------------------------------------------------- lists */
 
-.segmented {
-  display: inline-flex; gap: 4px; margin: 22px 0 6px; padding: 4px;
-  border-radius: 15px; background: rgba(255, 255, 255, 0.05);
-  border: 1px solid var(--stroke-soft);
-  -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
-}
-[data-theme="light"] .segmented { background: rgba(0, 0, 0, 0.035); }
 .seg {
   background: transparent; border: none; color: var(--muted);
   font-weight: 600; font-size: 14px; padding: 9px 20px;
@@ -327,7 +302,13 @@ input:focus, select:focus {
   -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
   transition: transform 0.6s var(--ease-in), border-color 0.6s var(--ease-in),
     background 0.6s var(--ease-in), box-shadow 0.6s var(--ease-in);
-  animation: rise 0.6s var(--ease-in) both;
+}
+/* one-shot entrance for genuinely NEW rows only — never on re-render */
+.row.fresh { animation: rise 0.5s var(--ease-in) both; }
+.msg.fresh .bubble { animation: pop 0.35s var(--ease-in) both; }
+@keyframes pop {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: none; }
 }
 [data-theme="light"] .row { background: linear-gradient(160deg, rgba(255, 255, 255, 0.85), rgba(255, 255, 255, 0.5)); }
 .row:hover {
@@ -663,80 +644,75 @@ body.covering .hint { opacity: 0; }
   .bg::before, .orb, .eye, .mascot, .star { animation: none !important; }
 }
 
-/* ================================================= Telegram-style dashboard
-   Sidebar rail (cloud logo + nav + account + theme + admin + log out).
-   Full-screen messenger: the layout fills the viewport, chat panes scroll
-   internally, the page itself never scrolls. */
+/* ================================================= Drawer + full-screen chat
+   No fixed sidebar: a slide-over drawer holds nav, account, appearance,
+   privacy and logout. The messenger fills the whole viewport. */
 .view.wide.active { max-width: none; padding: 12px; }
-.tg-layout {
-  display: grid;
-  grid-template-columns: 224px minmax(0, 1fr);
-  gap: 12px;
-  align-items: start;
+.tg-layout.single { display: block; }
+.tg-main.full { min-width: 0; }
+.drawer-backdrop {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgba(0, 0, 0, 0.55);
+  -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
 }
-.rail {
-  position: sticky;
-  top: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-height: calc(100vh - 24px);
-  padding: 16px 12px;
-  border-radius: 22px;
-  background: linear-gradient(160deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.025));
-  border: 1px solid var(--stroke);
-  -webkit-backdrop-filter: blur(30px) saturate(150%);
-  backdrop-filter: blur(30px) saturate(150%);
+[data-theme="light"] .drawer-backdrop { background: rgba(255, 255, 255, 0.45); }
+.drawer {
+  position: fixed; top: 0; bottom: 0; left: 0; z-index: 61;
+  width: min(320px, 88vw);
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 18px 14px;
+  background: linear-gradient(160deg, rgba(24, 24, 24, 0.97), rgba(10, 10, 10, 0.97));
+  border-right: 1px solid var(--stroke);
+  overflow-y: auto; overscroll-behavior: contain;
+  transform: translateX(-105%);
+  transition: transform 0.45s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
-[data-theme="light"] .rail { background: linear-gradient(160deg, rgba(255,255,255,0.88), rgba(255,255,255,0.6)); }
-.rail-nav { display: flex; flex-direction: column; gap: 6px; }
-.rail-nav .seg {
+[data-theme="light"] .drawer { background: linear-gradient(160deg, rgba(255,255,255,0.98), rgba(244,246,248,0.98)); }
+.drawer.open { transform: none; }
+/* clickable mini cloud: opens the assistant panel */
+.drawer-cloud {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  background: none; border: none; cursor: pointer; padding: 2px 0 0;
+  color: var(--text); font-family: inherit;
+}
+.drawer-cloud .cloud-canvas { width: 76px; height: 54px; transform: scale(0.42); transform-origin: top center; }
+.drawer-cloud-label { font-size: 12px; font-weight: 600; color: var(--muted); }
+.drawer-cloud:hover .drawer-cloud-label { color: var(--text); }
+.drawer-nav { display: flex; flex-direction: column; gap: 6px; }
+.drawer-nav .seg {
   display: flex; align-items: center; gap: 12px;
   width: 100%; padding: 11px 12px;
   border-radius: 14px;
   font-size: 14.5px;
   color: var(--muted);
 }
-.rail-nav .seg svg { flex-shrink: 0; }
-.rail-nav .seg:hover:not(.active) { color: var(--text); background: rgba(255, 255, 255, 0.06); }
-[data-theme="light"] .rail-nav .seg:hover:not(.active) { background: rgba(0, 0, 0, 0.05); }
-.rail-nav .seg.active { background: rgba(255, 255, 255, 0.92); color: #000; }
-[data-theme="light"] .rail-nav .seg.active { background: #0a0a0a; color: #fff; }
-.rail-foot {
-  margin-top: auto;
-  display: flex; flex-direction: column; gap: 10px;
-  position: relative;
+.drawer-nav .seg svg { flex-shrink: 0; }
+.drawer-nav .seg:hover:not(.active) { color: var(--text); background: rgba(255, 255, 255, 0.06); }
+[data-theme="light"] .drawer-nav .seg:hover:not(.active) { background: rgba(0, 0, 0, 0.05); }
+.drawer-nav .seg.active { background: rgba(255, 255, 255, 0.92); color: #000; }
+[data-theme="light"] .drawer-nav .seg.active { background: #0a0a0a; color: #fff; }
+.drawer-section {
+  padding: 4px 12px 12px; border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04); border: 1px solid var(--stroke-soft);
 }
-/* the cloud IS the sidebar logo: tiny icon-like brand mark on top */
-.rail-cloud {
-  display: grid; place-items: center;
-  padding: 0;
-  pointer-events: none;
+[data-theme="light"] .drawer-section { background: rgba(0, 0, 0, 0.03); }
+.drawer-label {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--muted); margin: 8px 0 8px;
 }
-.rail-cloud .cloud-canvas { width: 76px; height: 54px; transform: scale(0.42); transform-origin: top center; }
-/* settings gear + avatar buttons share the nav look */
-.rail-act {
-  display: flex; align-items: center; gap: 12px;
-  width: 100%; padding: 11px 12px;
-  border: none; border-radius: 14px; cursor: pointer;
-  background: transparent; color: var(--muted);
-  font-family: inherit; font-size: 14.5px; font-weight: 600;
-  transition: color 0.45s var(--ease-in), background 0.45s var(--ease-in);
+.drawer-section select { padding: 10px 12px; font-size: 13.5px; }
+.drawer-status { font-size: 12px; color: var(--muted); margin-top: 8px; }
+.drawer-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; font-size: 13.5px; }
+.drawer-row > span:first-child { flex: 1; }
+.mini-pills { display: inline-flex; gap: 4px; }
+.mini-pills .pill { padding: 6px 12px; font-size: 12.5px; }
+.drawer-check {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 0; font-size: 13.5px; cursor: pointer;
 }
-.rail-act svg { flex-shrink: 0; }
-.rail-act:hover { color: var(--text); background: rgba(255, 255, 255, 0.06); }
-[data-theme="light"] .rail-act:hover { background: rgba(0, 0, 0, 0.05); }
-.rail-foot { align-items: stretch; }
-.rail-avatar {
-  background: none; border: none; padding: 0; cursor: pointer;
-  display: grid; place-items: center; margin: 0 auto;
-}
-.rail-avatar .avatar { transition: transform 0.45s var(--ease-in); }
-.rail-avatar:hover .avatar { transform: scale(1.08); }
-.tg-main { min-width: 0; }
-.tg-main .topbar { position: sticky; top: 12px; z-index: 5; }
-.topbar-status { font-size: 12.5px; color: var(--muted); }
-/* ------------------------------------------- Telegram K chat components */
+.drawer-check input { width: 17px; height: 17px; margin: 0; accent-color: var(--text); }
+.drawer-foot { margin-top: auto; padding-top: 6px; }
+.drawer-foot .btn { margin-top: 0; }
 /* ------------------------------------------- Telegram K chat components */
 .chats-side { position: relative; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .chats-header { display: flex; align-items: center; gap: 8px; }
@@ -786,24 +762,65 @@ body.covering .hint { opacity: 0; }
 }
 .fab:hover { transform: scale(1.07) rotate(-6deg); }
 [data-theme="light"] .fab { background: #0a0a0a; color: #fff; }
-.menu-wrap { position: relative; flex: none; }
-.menu {
-  position: absolute; top: calc(100% + 8px); left: 0; z-index: 30;
-  min-width: 220px; padding: 6px; border-radius: 16px;
-  background: linear-gradient(160deg, rgba(30, 30, 30, 0.97), rgba(16, 16, 16, 0.97));
-  border: 1px solid var(--stroke);
-  box-shadow: var(--shadow);
+/* assistant slide-over panel */
+.ai-panel {
+  position: fixed; top: 0; bottom: 0; right: 0; z-index: 62;
+  width: min(380px, 94vw);
+  display: flex; flex-direction: column;
+  background: linear-gradient(160deg, rgba(24, 24, 24, 0.98), rgba(10, 10, 10, 0.98));
+  border-left: 1px solid var(--stroke);
+  transform: translateX(105%);
+  transition: transform 0.45s cubic-bezier(0.22, 0.61, 0.36, 1);
 }
-[data-theme="light"] .menu { background: linear-gradient(160deg, rgba(255, 255, 255, 0.98), rgba(255, 255, 255, 0.94)); }
-.menu-item {
-  display: flex; align-items: center; gap: 12px; width: 100%;
-  padding: 10px 12px; border: none; border-radius: 11px; cursor: pointer;
-  background: transparent; color: var(--text);
-  font-family: inherit; font-size: 14px; font-weight: 500; text-align: left;
-  transition: background 0.35s var(--ease-in);
+[data-theme="light"] .ai-panel { background: linear-gradient(160deg, rgba(255,255,255,0.99), rgba(244,246,248,0.99)); }
+.ai-panel:not(.hidden) { transform: none; }
+.ai-panel.hidden { display: flex !important; visibility: hidden; }
+.ai-head { display: flex; align-items: center; gap: 12px; padding: 16px 16px 12px; border-bottom: 1px solid var(--stroke-soft); }
+.ai-head .thread-meta { flex: 1; }
+.ai-orb {
+  flex: none; width: 42px; height: 42px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #fff, #cfcfcf 55%, #8a8a8a 100%);
+  box-shadow: 0 0 18px rgba(255, 255, 255, 0.35);
 }
-.menu-item:hover { background: rgba(255, 255, 255, 0.08); }
-[data-theme="light"] .menu-item:hover { background: rgba(0, 0, 0, 0.05); }
+.soon {
+  font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;
+  padding: 2px 8px; border-radius: 9px;
+  background: rgba(255, 255, 255, 0.12); color: var(--text);
+}
+#ai-messages { flex: 1; overflow-y: auto; padding: 14px; }
+.ai-panel .composer { padding: 12px 14px 16px; }
+/* per-message tools + deleted style */
+.msg-meta { display: flex; align-items: center; gap: 2px; }
+.msg-tools { display: flex; gap: 0; opacity: 0; transition: opacity 0.3s; }
+.msg:hover .msg-tools { opacity: 1; }
+.msg-act {
+  background: none; border: none; cursor: pointer; padding: 4px;
+  color: var(--muted); border-radius: 7px;
+  display: grid; place-items: center;
+}
+.msg-act:hover { color: var(--text); background: rgba(255, 255, 255, 0.1); }
+.msg.deleted .bubble { opacity: 0.55; font-style: italic; }
+.deleted-tag {
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+  padding: 2px 8px; border-radius: 8px; margin-bottom: 5px; display: inline-block;
+  background: rgba(255, 255, 255, 0.12); color: var(--text);
+}
+/* reply bar + thread search */
+.reply-bar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 12px; margin-top: 10px; border-radius: 12px;
+  background: rgba(255, 255, 255, 0.05); border: 1px solid var(--stroke-soft);
+  border-left: 3px solid var(--text);
+}
+.reply-meta { flex: 1; min-width: 0; font-size: 13px; }
+.reply-meta b { display: block; font-size: 12px; color: var(--muted); }
+.reply-meta span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thread-search { margin-top: 10px; }
+.thread-search input { border-radius: 18px; padding: 10px 16px; font-size: 14px; }
+.icon-btn.sm { width: 34px; height: 34px; }
+.icon-btn.muted-on { background: rgba(255, 255, 255, 0.2); }
+.btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.btn-row .btn { width: auto; margin: 0; }
 /* avatars with real photo over the initial fallback */
 .avwrap { position: relative; flex: none; width: 46px; height: 46px; }
 .avwrap.lg { width: 96px; height: 96px; }
@@ -888,56 +905,43 @@ body.covering .hint { opacity: 0; }
 .chats-wrap { align-items: stretch; }
 .thread {
   display: flex; flex-direction: column;
-  min-height: calc(100vh - 210px); max-height: calc(100vh - 170px);
-  padding: 14px;
+  min-height: calc(100vh - 60px); max-height: calc(100vh - 36px);
+  padding: 16px;
   border-radius: 19px;
   background: linear-gradient(160deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.015));
   border: 1px solid var(--stroke-soft);
 }
 [data-theme="light"] .thread { background: linear-gradient(160deg, rgba(255,255,255,0.85), rgba(255,255,255,0.5)); }
-.thread .panel-head { margin-bottom: 10px; }
-.messages { flex: 1; max-height: none; min-height: 220px; }
-.dialogs { max-height: calc(100vh - 210px); min-height: 200px; }
-/* ------------------------------------------------- monochrome scrollbars */
-* { scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.22) transparent; }
-[data-theme="light"] * { scrollbar-color: rgba(0, 0, 0, 0.28) transparent; }
-::-webkit-scrollbar { width: 10px; height: 10px; }
+.messages {
+  flex: 1; max-height: none; min-height: 220px; padding: 12px 10px;
+  border-radius: 14px;
+  background-image: radial-gradient(rgba(255, 255, 255, 0.055) 1px, transparent 1.4px);
+  background-size: 22px 22px;
+}
+[data-theme="light"] .messages {
+  background-image: radial-gradient(rgba(0, 0, 0, 0.06) 1px, transparent 1.4px);
+}
+.dialogs { max-height: calc(100vh - 190px); min-height: 200px; }
+/* --------------------------------------- hidden scrollbars, Telegram-style */
+* { scrollbar-width: none; }
+::-webkit-scrollbar { width: 0; height: 0; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.18);
-  border-radius: 8px;
-  border: 3px solid transparent;
-  background-clip: content-box;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.32);
-  border: 3px solid transparent;
-  background-clip: content-box;
-}
-[data-theme="light"] ::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.22);
-  border: 3px solid transparent;
-  background-clip: content-box;
-}
-[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.38);
-  border: 3px solid transparent;
-  background-clip: content-box;
-}
+::-webkit-scrollbar-thumb { background: transparent; }
+/* ------------------------------------------------- density + font modes */
+body[data-density="compact"] .row { padding: 9px 12px; border-radius: 15px; }
+body[data-density="compact"] .avwrap { width: 38px; height: 38px; }
+body[data-density="compact"] .bubble { padding: 7px 11px; font-size: 13px; }
+body[data-density="compact"] .messages { gap: 5px; }
+body[data-density="compact"] .dialogs { gap: 6px; }
+body[data-font="s"] .bubble { font-size: 12.5px; }
+body[data-font="l"] .bubble { font-size: 16px; }
+body[data-font="l"] .msg-time { font-size: 11.5px; }
 @media (max-width: 700px) {
-  /* sidebar becomes a top toolbar */
   .view.wide.active { padding: 8px; }
-  .tg-layout { grid-template-columns: 1fr; }
-  .rail { position: static; min-height: 0; flex-direction: row; flex-wrap: wrap; align-items: center; }
-  .rail-cloud .cloud-canvas { width: 64px; height: 46px; transform: scale(0.36); }
-  .rail-nav { flex-direction: row; flex: 1 1 auto; }
-  .rail-nav .seg, .rail-act { flex: 1; justify-content: center; padding: 10px 6px; }
-  .rail-nav .seg span, .rail-act span { display: none; }
-  .rail-foot { margin-top: 0; width: auto; }
+  .ai-panel { width: 94vw; }
   .only-mobile { display: grid; }
   .dialogs { max-height: 240px; }
   .thread { max-height: none; min-height: 60vh; }
   .msg-photo, .msg-video { max-height: 240px; }
   .msg-round { width: 160px; height: 160px; }
-  .settings-sheet { width: 94vw; }
 }
