@@ -1,10 +1,10 @@
-"""Encrypted vault: stores Telegram sessions + users behind one password.
+"""Encrypted vault: stores Telegram sessions behind one admin password.
 
 Design
 ------
 * `vault.json`      -> NON-secret metadata (salt, KDF params, admin username,
                        a verification token). Safe to sync.
-* `accounts.enc`    -> Fernet-encrypted JSON (accounts + users). Ciphertext
+* `accounts.enc`    -> Fernet-encrypted JSON (accounts). Ciphertext
                        only, so it is safe to sync through a cloud folder.
 
 The encryption key is derived from the admin password with PBKDF2-SHA256.
@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import hmac
 import json
 import secrets
 import time
@@ -171,78 +170,4 @@ class Vault:
     def delete_account(self, account_id: str) -> None:
         store = self._read_store()
         store["accounts"].pop(account_id, None)
-        # drop dangling references from users
-        for user in store["users"].values():
-            user["account_ids"] = [a for a in user.get("account_ids", []) if a != account_id]
-            if user.get("default_account") == account_id:
-                user["default_account"] = (user["account_ids"] or [None])[0]
-        self._write_store(store)
-
-    # --------------------------------------------------------------- users
-    def list_users(self) -> list[dict]:
-        store = self._read_store()
-        out = []
-        for u in store["users"].values():
-            out.append({
-                "username": u["username"],
-                "role": "regular",
-                "slots": u.get("slots", 2),
-                "account_ids": u.get("account_ids", []),
-                "default_account": u.get("default_account"),
-            })
-        return out
-
-    def get_user(self, username: str) -> Optional[dict]:
-        return self._read_store()["users"].get(username)
-
-    def add_user(self, username: str, password: str, slots: int,
-                 account_ids: list[str]) -> None:
-        username = username.strip()
-        if not username:
-            raise VaultError("Username is required")
-        if len(password) < 6:
-            raise VaultError("User password must be at least 6 characters")
-        if username == self.admin_username:
-            raise VaultError("That username is taken")
-
-        store = self._read_store()
-        if username in store["users"]:
-            raise VaultError("That user already exists")
-
-        # A regular user is deliberately limited so their view stays clean.
-        slots = max(1, min(int(slots), 2))
-        account_ids = [a for a in account_ids if a in store["accounts"]][:slots]
-
-        salt = secrets.token_bytes(16)
-        password_hash = hashlib.pbkdf2_hmac(
-            "sha256", password.encode("utf-8"), salt, 200_000
-        ).hex()
-
-        store["users"][username] = {
-            "username": username,
-            "role": "regular",
-            "salt": salt.hex(),
-            "iterations": 200_000,
-            "password_hash": password_hash,
-            "slots": slots,
-            "account_ids": account_ids,
-            "default_account": account_ids[0] if account_ids else None,
-        }
-        self._write_store(store)
-
-    def verify_user(self, username: str, password: str) -> Optional[dict]:
-        user = self._read_store()["users"].get(username)
-        if not user:
-            return None
-        salt = bytes.fromhex(user["salt"])
-        candidate = hashlib.pbkdf2_hmac(
-            "sha256", password.encode("utf-8"), salt, user["iterations"]
-        ).hex()
-        if hmac.compare_digest(candidate, user["password_hash"]):
-            return user
-        return None
-
-    def delete_user(self, username: str) -> None:
-        store = self._read_store()
-        store["users"].pop(username, None)
         self._write_store(store)

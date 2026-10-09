@@ -1,9 +1,8 @@
 """FoggyGramm local server (open source, self-hosted).
 
-M1 endpoints: setup, admin/regular login, account add (phone -> code -> 2FA),
-account list/restore, and regular-user management.
-M2 endpoints: encrypted backups (manual/on-change/daily) + sync-folder
-export/import.
+Single-admin app: setup, login, account add (phone -> code -> 2FA),
+account list/restore, encrypted backups (manual/on-change/daily),
+sync-folder export/import, and chats (list/history/send).
 
 Run:  python -m uvicorn backend.main:app --host 127.0.0.1 --port 8765
 """
@@ -58,13 +57,6 @@ class VerifyBody(BaseModel):
 class VerifyPasswordBody(BaseModel):
     login_id: str
     password: str
-
-
-class UserBody(BaseModel):
-    username: str
-    password: str
-    slots: int = 2
-    account_ids: list[str] = []
 
 
 class BackupSettingsBody(BaseModel):
@@ -156,20 +148,8 @@ def _require_unlocked() -> None:
         raise HTTPException(403, "Vault locked")
 
 
-def _require_account(session: dict, account_id: str) -> None:
-    """Regular users may only touch their assigned accounts."""
-    if session.get("role") == "admin":
-        return
-    user = vault.get_user(session["username"]) or {}
-    if account_id not in set(user.get("account_ids", [])):
-        raise HTTPException(403, "Not your account")
-
-
 async def _after_vault_replace() -> None:
-    """User/account list may have changed: drop regular sessions, reconnect."""
-    for token, session in list(SESSIONS.items()):
-        if session.get("role") != "admin":
-            SESSIONS.pop(token, None)
+    """Account list may have changed: reconnect everything."""
     await manager.disconnect_all()
     asyncio.create_task(connect_all_accounts())
 
@@ -219,24 +199,13 @@ async def login(body: LoginBody, response: Response):
     if not vault.is_initialized():
         raise HTTPException(400, "Not set up yet")
 
-    if body.username == vault.admin_username:
-        if not vault.unlock(body.username, body.password):
-            raise HTTPException(401, "Wrong username or password")
-        token = secrets.token_urlsafe(32)
-        SESSIONS[token] = {"username": body.username, "role": "admin"}
-        response.set_cookie(COOKIE, token, httponly=True, samesite="lax")
-        asyncio.create_task(connect_all_accounts())
-        return {"ok": True, "role": "admin"}
-
-    if not vault.is_unlocked:
-        raise HTTPException(403, "Server is locked. Ask the admin to unlock it.")
-    user = vault.verify_user(body.username, body.password)
-    if not user:
+    if body.username != vault.admin_username or not vault.unlock(body.username, body.password):
         raise HTTPException(401, "Wrong username or password")
     token = secrets.token_urlsafe(32)
-    SESSIONS[token] = {"username": body.username, "role": "regular"}
+    SESSIONS[token] = {"username": body.username, "role": "admin"}
     response.set_cookie(COOKIE, token, httponly=True, samesite="lax")
-    return {"ok": True, "role": "regular"}
+    asyncio.create_task(connect_all_accounts())
+    return {"ok": True, "role": "admin"}
 
 
 @app.post("/api/logout")
@@ -256,19 +225,8 @@ def me(request: Request):
 
 @app.get("/api/accounts")
 def accounts(request: Request):
-    session = require_login(request)
-    all_accounts = vault.list_accounts()
-    if session["role"] == "admin":
-        visible = all_accounts
-    else:
-        user = vault.get_user(session["username"]) or {}
-        allowed = set(user.get("account_ids", []))
-        visible = [a for a in all_accounts if a["id"] in allowed]
-    return {
-        "accounts": [_public_account(a) for a in visible],
-        "default_account": (vault.get_user(session["username"]) or {}).get("default_account")
-        if session["role"] != "admin" else None,
-    }
+    require_login(request)
+    return {"accounts": [_public_account(a) for a in vault.list_accounts()]}
 
 
 @app.post("/api/accounts/start")
@@ -311,31 +269,6 @@ async def account_delete(account_id: str, request: Request):
     vault.delete_account(account_id)
     backups.auto_backup_on_change()
     await manager.disconnect_account(account_id)
-    return {"ok": True}
-
-
-@app.get("/api/users")
-def list_users(request: Request):
-    require_admin(request)
-    return {"admin": vault.admin_username, "users": vault.list_users()}
-
-
-@app.post("/api/users")
-def add_user(body: UserBody, request: Request):
-    require_admin(request)
-    try:
-        vault.add_user(body.username, body.password, body.slots, body.account_ids)
-    except VaultError as exc:
-        raise HTTPException(400, str(exc))
-    backups.auto_backup_on_change()
-    return {"ok": True}
-
-
-@app.delete("/api/users/{username}")
-def delete_user(username: str, request: Request):
-    require_admin(request)
-    vault.delete_user(username)
-    backups.auto_backup_on_change()
     return {"ok": True}
 
 
@@ -425,8 +358,7 @@ async def sync_import(request: Request):
 # ------------------------------------------------------- M3 chat endpoints
 @app.get("/api/chats")
 async def chats(account_id: str, request: Request, limit: int = 30):
-    session = require_login(request)
-    _require_account(session, account_id)
+    require_admin(request)
     try:
         return {"dialogs": await manager.get_dialogs(account_id, limit)}
     except RuntimeError as exc:
@@ -436,8 +368,7 @@ async def chats(account_id: str, request: Request, limit: int = 30):
 @app.get("/api/chats/history")
 async def chat_history(account_id: str, peer_id: int, request: Request,
                        limit: int = 30, offset_id: int = 0):
-    session = require_login(request)
-    _require_account(session, account_id)
+    require_admin(request)
     try:
         return {"messages": await manager.get_history(account_id, peer_id, limit, offset_id)}
     except RuntimeError as exc:
@@ -446,9 +377,8 @@ async def chat_history(account_id: str, peer_id: int, request: Request,
 
 @app.post("/api/chats/send")
 async def chat_send(body: SendBody, request: Request):
-    session = require_admin(request)
+    require_admin(request)
     _require_unlocked()
-    _require_account(session, body.account_id)
     try:
         return await manager.send_message(body.account_id, body.peer_id, body.text)
     except RuntimeError as exc:

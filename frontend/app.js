@@ -1,5 +1,5 @@
-// FoggyGramm frontend (M1) — monochrome glass UI.
-// Setup, admin/regular login, account add/restore, user management,
+// FoggyGramm frontend — monochrome glass UI.
+// Setup, admin login, account add/restore, chats, backups, and sync,
 // a 3D cloud that peeks over the cards, follows the pointer, covers its
 // eyes while a password is typed, and shows hints.
 
@@ -95,22 +95,15 @@ async function enterDashboard(me) {
   show("dash");
   $("who-name").textContent = me.username;
   $("who-role").textContent = me.role;
-  const isAdmin = me.role === "admin";
-  document.querySelectorAll(".admin-only").forEach((el) =>
-    el.classList.toggle("hidden", !isAdmin)
-  );
   await loadAccounts();
-  if (isAdmin) {
-    await loadUsers();
-    await loadSyncTab();
-  }
+  switchTab("chats");
 }
 
 function switchTab(name) {
   document.querySelectorAll(".seg").forEach((t) =>
     t.classList.toggle("active", t.dataset.tab === name)
   );
-  ["accounts", "chats", "users", "sync"].forEach((t) =>
+  ["accounts", "chats", "sync"].forEach((t) =>
     $(`tab-${t}`).classList.toggle("hidden", name !== t)
   );
   if (name === "sync") loadSyncTab();
@@ -141,50 +134,13 @@ async function loadAccounts() {
       </div>
       <div class="dot ${acc.connected ? "on" : ""}" title="${acc.connected ? "connected" : "offline"}"></div>
     `;
-    if ($("who-role").textContent === "admin") {
-      const del = document.createElement("button");
-      del.className = "btn ghost small";
-      del.textContent = "Remove";
-      del.onclick = async () => {
-        if (!confirm(`Remove ${acc.label || acc.phone}?`)) return;
-        await api(`/accounts/${acc.id}`, { method: "DELETE" });
-        await loadAccounts();
-      };
-      row.appendChild(del);
-    }
-    list.appendChild(row);
-  });
-}
-
-async function loadUsers() {
-  const data = await api("/users");
-  const list = $("users-list");
-  list.innerHTML = "";
-  if (!data.users.length) {
-    list.innerHTML = `<div class="empty">No regular users yet.</div>`;
-    return;
-  }
-  data.users.forEach((u, i) => {
-    const row = document.createElement("div");
-    row.className = "row";
-    row.style.animationDelay = `${i * 45}ms`;
-    const names = u.account_ids
-      .map((id) => (ACCOUNTS.find((a) => a.id === id) || {}).label || id)
-      .join(", ");
-    row.innerHTML = `
-      <div class="avatar">${initial(u.username)}</div>
-      <div class="meta">
-        <div class="title">${u.username}</div>
-        <div class="sub">${u.slots} slot(s) · ${names || "no accounts assigned"}</div>
-      </div>
-    `;
     const del = document.createElement("button");
     del.className = "btn ghost small";
-    del.textContent = "Delete";
+    del.textContent = "Remove";
     del.onclick = async () => {
-      if (!confirm(`Delete user ${u.username}?`)) return;
-      await api(`/users/${u.username}`, { method: "DELETE" });
-      await loadUsers();
+      if (!confirm(`Remove ${acc.label || acc.phone}?`)) return;
+      await api(`/accounts/${acc.id}`, { method: "DELETE" });
+      await loadAccounts();
     };
     row.appendChild(del);
     list.appendChild(row);
@@ -194,7 +150,7 @@ async function loadUsers() {
 // ------------------------------------------------------------- M2 sync tab
 const BACKUP_MODE_LABELS = {
   "manual": "Manual — only when I press “Back up now”",
-  "on-change": "On change — after every account or user change",
+  "on-change": "On change — after every account change",
   "daily": "Daily — automatically, at most once a day",
 };
 
@@ -243,7 +199,7 @@ async function loadSyncTab() {
     const row = document.createElement("div");
     row.className = "row";
     row.style.animationDelay = `${i * 45}ms`;
-    const counts = b.accounts >= 0 ? `${b.accounts} account(s) · ${b.users} user(s)` : "encrypted copy";
+    const counts = b.accounts >= 0 ? `${b.accounts} account(s)` : "encrypted copy";
     row.innerHTML = `
       <div class="avatar">${initial(b.label)}</div>
       <div class="meta">
@@ -321,10 +277,6 @@ const fmtClock = (iso) => {
 
 const CHAT = { account: null, peer: null, timer: null };
 
-function isAdmin() {
-  return $("who-role").textContent === "admin";
-}
-
 async function loadChats() {
   if (CHAT.timer) { clearInterval(CHAT.timer); CHAT.timer = null; }
   const sel = $("chat-account");
@@ -346,7 +298,6 @@ async function loadChats() {
     CHAT.peer = null;
   }
   sel.value = CHAT.account;
-  $("composer-note").style.display = isAdmin() ? "none" : "";
   await loadDialogs();
   CHAT.timer = setInterval(async () => {
     if ($("tab-chats").classList.contains("hidden")) return;
@@ -522,57 +473,6 @@ $("btn-verify-pass").onclick = async () => {
   }
 };
 
-// ------------------------------------------------------------- user modal
-function renderUserAccountOptions() {
-  const box = $("user-accounts");
-  box.innerHTML = "";
-  if (!ACCOUNTS.length) {
-    box.innerHTML = `<span class="sub">No accounts available to assign.</span>`;
-    return;
-  }
-  ACCOUNTS.forEach((acc) => {
-    const label = document.createElement("label");
-    label.className = "check";
-    label.innerHTML = `
-      <input type="checkbox" value="${acc.id}" />
-      <span>${acc.label || acc.phone}</span>
-    `;
-    box.appendChild(label);
-  });
-}
-
-$("btn-add-user").onclick = () => {
-  $("user-error").textContent = "";
-  $("user-name").value = "";
-  $("user-pass").value = "";
-  $("user-slots").value = "2";
-  renderUserAccountOptions();
-  $("modal-user").classList.remove("hidden");
-};
-$("btn-close-user").onclick = () => $("modal-user").classList.add("hidden");
-
-$("btn-save-user").onclick = async () => {
-  $("user-error").textContent = "";
-  const accountIds = Array.from(
-    $("user-accounts").querySelectorAll("input:checked")
-  ).map((c) => c.value);
-  try {
-    await api("/users", {
-      method: "POST",
-      body: JSON.stringify({
-        username: $("user-name").value.trim(),
-        password: $("user-pass").value,
-        slots: parseInt($("user-slots").value, 10) || 2,
-        account_ids: accountIds,
-      }),
-    });
-    $("modal-user").classList.add("hidden");
-    await loadUsers();
-  } catch (e) {
-    $("user-error").textContent = e.message;
-  }
-};
-
 // ------------------------------------ clouds follow the pointer (all clouds)
 (() => {
   let mx = 0, my = 0, tx = 0, ty = 0;
@@ -618,16 +518,14 @@ const HINTS = {
     "Everything stays on this machine — nothing leaves it.",
   ],
   login: [
-    "Log in as admin to restore all your accounts.",
-    "Regular users can sign in only while the admin is unlocked.",
+    "Log in to restore all your accounts.",
     "Forget the password and the vault can't be opened. Keep it safe.",
   ],
   dash: [
     "Click 'Add account' to log in once — no codes after that.",
-    "Assign 1–2 accounts to keep a regular user's view clean.",
     "A glowing dot means the account is connected.",
     "The Sync tab keeps encrypted backups and carries the vault to other devices.",
-    "Open the Chats tab to read and reply — sending is admin-only for now.",
+    "Open the Chats tab to read and reply to your conversations.",
   ],
 };
 const HINT_TEXTS = document.querySelectorAll(".cloud-hint-text");

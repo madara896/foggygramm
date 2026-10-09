@@ -104,13 +104,12 @@ class BackupManager:
         if self.vault is not None and self.vault.is_unlocked:
             try:
                 accounts = self.vault.list_accounts()
-                users = self.vault.list_users()
-                return {"accounts": len(accounts), "users": len(users)}
+                return {"accounts": len(accounts)}
             except BackupError:
                 pass
             except Exception:
                 pass
-        return {"accounts": -1, "users": -1}
+        return {"accounts": -1}
 
     def create_backup(self, label: str = "", mode: str = "manual") -> dict:
         self._require_ready()
@@ -233,9 +232,7 @@ class BackupManager:
             "exported_at": manifest.get("exported_at") if manifest else None,
             "device": manifest.get("device") if manifest else None,
             "export_accounts": manifest.get("accounts") if manifest else None,
-            "export_users": manifest.get("users") if manifest else None,
             "local_accounts": self._counts()["accounts"],
-            "local_users": self._counts()["users"],
             "local_newer": None,
             "differs": None,
         }

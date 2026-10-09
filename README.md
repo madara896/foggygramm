@@ -32,15 +32,15 @@ admin username/password to create your vault. After that, log in and click
 enter it, plus your 2FA password if you have one). From then on, logging in
 restores every account with no codes.
 
-## Roles
-- **Admin** — sees and auto-restores *all* accounts.
-- **Regular** — created by the admin; sees only 1–2 assigned accounts, for a
-  clean view. Regular users can only log in while the admin has the server
-  unlocked.
+## Access
+Single admin login — it sees and auto-restores *all* accounts. Log in and
+the dashboard opens on **Chats**, like Telegram Web: conversation list on
+the left, thread on the right. **Accounts** manages connections, **Sync**
+handles backups and cross-device transport.
 
 ## Backup & sync
-- **Backup modes** (admin → Sync tab): `manual`, `on-change` (after every
-  account/user change), or `daily` (background check, at most once a day).
+- **Backup modes** (Sync tab): `manual`, `on-change` (after every account
+  change), or `daily` (background check, at most once a day).
   Old backups are pruned automatically (keep last N, default 10).
 - **Restore** brings a backup back; your current vault is always kept first
   as a `pre-restore-…` safety backup, so nothing is ever lost.
