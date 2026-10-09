@@ -93,6 +93,7 @@
 
       <div class="segmented" role="tablist">
         <button class="seg active" data-tab="accounts">Accounts</button>
+        <button class="seg" data-tab="chats">Chats</button>
         <button class="seg admin-only" data-tab="users">Users</button>
         <button class="seg admin-only" data-tab="sync">Sync</button>
       </div>
@@ -103,6 +104,25 @@
           <button class="btn primary small admin-only" id="btn-add-account">Add account</button>
         </div>
         <div id="accounts-list" class="list"></div>
+      </div>
+
+      <div class="panel hidden" id="tab-chats">
+        <div class="panel-head">
+          <h2>Chats</h2>
+        </div>
+        <div class="field"><label>Account</label><select id="chat-account"></select></div>
+        <div class="chats-wrap">
+          <div id="dialogs-list" class="list dialogs"></div>
+          <div class="thread">
+            <div class="panel-head"><h2 id="thread-title">Select a chat</h2></div>
+            <div id="messages-list" class="messages"></div>
+            <div class="composer admin-only" id="composer">
+              <input id="composer-input" placeholder="Write a message…" />
+              <button class="btn primary small" id="btn-send">Send</button>
+            </div>
+            <p class="lead" id="composer-note">Only the admin can send messages in this version.</p>
+          </div>
+        </div>
       </div>
 
       <div class="panel hidden" id="tab-users">

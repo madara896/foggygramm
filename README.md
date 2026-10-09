@@ -67,8 +67,9 @@ unencrypted.
 
 ## Contributing
 Issues and pull requests are welcome.
-- Roadmap: M3 media/chat backup + cloud saver; M4 bots; M5 groups; M6 AI
-  agent; M7 UI polish; M8 `.exe`; M9 `.apk`.
+- Roadmap: M3 chat UI (in progress: conversation list, reading + sending;
+  next: media backup + cloud saver); M4 bots; M5 groups; M6 AI agent;
+  M7 UI polish; M8 `.exe`; M9 `.apk`.
 - Keep PRs small, match the existing code style, and never include real API
   keys, session strings, or anything from your `data/` folder.
 

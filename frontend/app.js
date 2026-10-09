@@ -110,10 +110,11 @@ function switchTab(name) {
   document.querySelectorAll(".seg").forEach((t) =>
     t.classList.toggle("active", t.dataset.tab === name)
   );
-  ["accounts", "users", "sync"].forEach((t) =>
+  ["accounts", "chats", "users", "sync"].forEach((t) =>
     $(`tab-${t}`).classList.toggle("hidden", name !== t)
   );
   if (name === "sync") loadSyncTab();
+  if (name === "chats") loadChats();
 }
 document.querySelectorAll(".seg").forEach((t) => (t.onclick = () => switchTab(t.dataset.tab)));
 
@@ -304,6 +305,156 @@ $("btn-sync-import").onclick = async () => {
   await loadSyncTab();
 };
 
+// ---------------------------------------------------------------- M3 chats
+const esc = (s) => (s || "").replace(/[&<>"']/g, (c) =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+const fmtClock = (iso) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const today = new Date();
+  const sameDay = d.toDateString() === today.toDateString();
+  return sameDay
+    ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    : d.toLocaleDateString([], { day: "numeric", month: "short" });
+};
+
+const CHAT = { account: null, peer: null, timer: null };
+
+function isAdmin() {
+  return $("who-role").textContent === "admin";
+}
+
+async function loadChats() {
+  if (CHAT.timer) { clearInterval(CHAT.timer); CHAT.timer = null; }
+  const sel = $("chat-account");
+  sel.innerHTML = "";
+  if (!ACCOUNTS.length) {
+    sel.innerHTML = `<option value="">No accounts available</option>`;
+    $("dialogs-list").innerHTML = `<div class="empty">No accounts yet.</div>`;
+    $("messages-list").innerHTML = "";
+    return;
+  }
+  ACCOUNTS.forEach((a) => {
+    const opt = document.createElement("option");
+    opt.value = a.id;
+    opt.textContent = `${a.label || a.phone}${a.connected ? "" : " (offline)"}`;
+    sel.appendChild(opt);
+  });
+  if (!CHAT.account || !ACCOUNTS.some((a) => a.id === CHAT.account)) {
+    CHAT.account = ACCOUNTS[0].id;
+    CHAT.peer = null;
+  }
+  sel.value = CHAT.account;
+  $("composer-note").style.display = isAdmin() ? "none" : "";
+  await loadDialogs();
+  CHAT.timer = setInterval(async () => {
+    if ($("tab-chats").classList.contains("hidden")) return;
+    await loadDialogs(true);
+    if (CHAT.peer) await loadHistory(false);
+  }, 5000);
+}
+
+$("chat-account").onchange = async () => {
+  CHAT.account = $("chat-account").value;
+  CHAT.peer = null;
+  $("thread-title").textContent = "Select a chat";
+  $("messages-list").innerHTML = "";
+  await loadDialogs();
+};
+
+async function loadDialogs(silent) {
+  if (!CHAT.account) return;
+  let dialogs = [];
+  try {
+    const data = await api(`/chats?account_id=${encodeURIComponent(CHAT.account)}&limit=30`);
+    dialogs = data.dialogs || [];
+  } catch (e) {
+    if (!silent) $("dialogs-list").innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+    return;
+  }
+  const list = $("dialogs-list");
+  list.innerHTML = dialogs.length ? "" : `<div class="empty">No conversations yet.</div>`;
+  dialogs.forEach((d) => {
+    const row = document.createElement("div");
+    row.className = "row dialog" + (CHAT.peer === d.peer_id ? " active" : "");
+    row.innerHTML = `
+      <div class="avatar">${esc(initial(d.title))}</div>
+      <div class="meta">
+        <div class="title">${esc(d.title)}</div>
+        <div class="sub">${d.last_out ? "You: " : ""}${esc(d.last_text)}</div>
+      </div>
+      ${d.unread ? `<div class="badge">${d.unread > 99 ? "99+" : d.unread}</div>` : ""}
+      <div class="sub">${esc(fmtClock(d.last_date))}</div>
+    `;
+    row.onclick = () => openThread(d.peer_id, d.title);
+    list.appendChild(row);
+  });
+}
+
+async function openThread(peer_id, title) {
+  CHAT.peer = peer_id;
+  $("thread-title").textContent = title;
+  document.querySelectorAll("#dialogs-list .dialog").forEach((el) => el.classList.remove("active"));
+  await loadHistory(true);
+  await loadDialogs(true);
+}
+
+function nearBottom(el) {
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+}
+
+async function loadHistory(scroll) {
+  if (!CHAT.account || !CHAT.peer) return;
+  let messages = [];
+  try {
+    const data = await api(
+      `/chats/history?account_id=${encodeURIComponent(CHAT.account)}&peer_id=${CHAT.peer}&limit=30`
+    );
+    messages = data.messages || [];
+  } catch (e) {
+    $("messages-list").innerHTML = `<div class="empty">${esc(e.message)}</div>`;
+    return;
+  }
+  const box = $("messages-list");
+  const stick = scroll || nearBottom(box) || !box.children.length;
+  box.innerHTML = messages.length ? "" : `<div class="empty">No messages yet. Say hi.</div>`;
+  messages.forEach((m) => {
+    const wrap = document.createElement("div");
+    wrap.className = "msg" + (m.out ? " out" : "");
+    wrap.innerHTML = `
+      <div class="bubble">${esc(m.text) || "<i>empty message</i>"}</div>
+      <div class="msg-time">${esc(fmtClock(m.date))}${m.has_media ? " · 📎" : ""}</div>
+    `;
+    box.appendChild(wrap);
+  });
+  if (stick) box.scrollTop = box.scrollHeight;
+}
+
+async function sendCurrent() {
+  const input = $("composer-input");
+  const text = input.value.trim();
+  if (!text || !CHAT.account || !CHAT.peer) return;
+  input.value = "";
+  try {
+    await api("/chats/send", {
+      method: "POST",
+      body: JSON.stringify({ account_id: CHAT.account, peer_id: CHAT.peer, text }),
+    });
+  } catch (e) {
+    alert(e.message);
+    input.value = text;
+    return;
+  }
+  await loadHistory(true);
+  await loadDialogs(true);
+}
+
+$("btn-send").onclick = sendCurrent;
+$("composer-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") sendCurrent();
+});
+
 // ---------------------------------------------------------- account modal
 function resetAccountModal() {
   $("acct-step-phone").classList.remove("hidden");
@@ -476,6 +627,7 @@ const HINTS = {
     "Assign 1–2 accounts to keep a regular user's view clean.",
     "A glowing dot means the account is connected.",
     "The Sync tab keeps encrypted backups and carries the vault to other devices.",
+    "Open the Chats tab to read and reply — sending is admin-only for now.",
   ],
 };
 const HINT_TEXTS = document.querySelectorAll(".cloud-hint-text");

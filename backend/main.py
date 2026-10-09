@@ -80,6 +80,12 @@ class BackupRestoreBody(BaseModel):
     id: str
 
 
+class SendBody(BaseModel):
+    account_id: str
+    peer_id: int
+    text: str
+
+
 # -------------------------------------------------------------------- helpers
 def current_session(request: Request) -> Optional[dict]:
     token = request.cookies.get(COOKIE)
@@ -148,6 +154,15 @@ async def _connect_one(account_id: str) -> None:
 def _require_unlocked() -> None:
     if not vault.is_unlocked:
         raise HTTPException(403, "Vault locked")
+
+
+def _require_account(session: dict, account_id: str) -> None:
+    """Regular users may only touch their assigned accounts."""
+    if session.get("role") == "admin":
+        return
+    user = vault.get_user(session["username"]) or {}
+    if account_id not in set(user.get("account_ids", [])):
+        raise HTTPException(403, "Not your account")
 
 
 async def _after_vault_replace() -> None:
@@ -405,6 +420,39 @@ async def sync_import(request: Request):
         raise HTTPException(400, str(exc))
     await _after_vault_replace()
     return result
+
+
+# ------------------------------------------------------- M3 chat endpoints
+@app.get("/api/chats")
+async def chats(account_id: str, request: Request, limit: int = 30):
+    session = require_login(request)
+    _require_account(session, account_id)
+    try:
+        return {"dialogs": await manager.get_dialogs(account_id, limit)}
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.get("/api/chats/history")
+async def chat_history(account_id: str, peer_id: int, request: Request,
+                       limit: int = 30, offset_id: int = 0):
+    session = require_login(request)
+    _require_account(session, account_id)
+    try:
+        return {"messages": await manager.get_history(account_id, peer_id, limit, offset_id)}
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc))
+
+
+@app.post("/api/chats/send")
+async def chat_send(body: SendBody, request: Request):
+    session = require_admin(request)
+    _require_unlocked()
+    _require_account(session, body.account_id)
+    try:
+        return await manager.send_message(body.account_id, body.peer_id, body.text)
+    except RuntimeError as exc:
+        raise HTTPException(400, str(exc))
 
 
 # ------------------------------------------------------------------ frontend
